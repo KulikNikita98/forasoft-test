@@ -83,10 +83,13 @@ graph TB
         SCB[Socket.io Client]
     end
     
-    subgraph "Server (Node.js)"
+    subgraph "Server (Node.js — MVC)"
+        EXP[Express REST API]
         SS[Socket.io Server]
-        RM[RoomManager]
-        SH[SignalingHandler]
+        RC[RoomController]
+        SC[SocketController]
+        RSV[RoomService]
+        MDL[Models: Room, Participant]
     end
     
     subgraph "External"
@@ -94,12 +97,16 @@ graph TB
     end
     
     CA --> SCA
-    SCA <-->|"Signaling (SDP/ICE)"| SS
-    SS <--> RM
-    SS <--> SH
+    CA -->|"REST: create/get room"| EXP
+    EXP --> RC
+    RC --> RSV
+    SCA <-->|"WS: signaling + chat"| SS
+    SS --> SC
+    SC --> RSV
+    RSV --> MDL
     
     CB --> SCB
-    SCB <-->|"Signaling (SDP/ICE)"| SS
+    SCB <-->|"WS: signaling + chat"| SS
     
     PCA <-.->|"P2P Media Streams"| PCB
     PCA ---|"ICE Candidates"| STUN
@@ -214,55 +221,108 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
   }
   ```
 
-### Backend Modules
+### Backend Modules (MVC + сервисный слой)
 
-**`server.js`**
-- **Ответственность:** HTTP + Socket.io сервер, точка входа
-- **Инициализация:** Express app, Socket.io server, статика, HTTPS сертификаты
+**`server.js`** (entry point)
+- **Ответственность:** только запуск сервера — `server.listen()` + graceful shutdown (SIGTERM/SIGINT, `io.close()`)
+- Вся сборка приложения вынесена в `setup/app.js` (`createApp()`)
 
-**`RoomManager`**
-- **Ответственность:** управление комнатами и участниками в памяти
-- **API:**
-  ```javascript
-  class RoomManager {
-    createRoom(roomId: string): Room
-    joinRoom(roomId: string, socketId: string, userName: string): {success, participants, error}
-    leaveRoom(socketId: string): {roomId, userName, shouldDeleteRoom}
-    getRoom(roomId: string): Room | null
-    getRoomParticipants(roomId: string): Array
-    addChatMessage(roomId: string, message: Message): void
-    getChatHistory(roomId: string): Array
-  }
-  ```
+**`setup/app.js`** (composition root)
+- **Ответственность:** собирает все слои — Express + health-check, REST-роуты, HTTPS-сервер, Socket.io, подключение контроллеров; создаёт единый экземпляр `RoomService`, общий для HTTP и WebSocket
 
-**`SignalingHandler`**
-- **Ответственность:** обработка WebRTC сигналинга и Socket.io событий
-- **События:** регистрация обработчиков для `join-room`, `leave-room`, `offer`, `answer`, `ice-candidate`, `chat-message`, `disconnecting`
+**`config/index.js`**
+- **Ответственность:** единый объект конфигурации из `.env` (port, corsOrigin, ssl paths, logLevel, socketIO options)
+
+**Models (M):**
+
+**`models/Participant.js`**
+```javascript
+class Participant {
+  constructor(socketId, userName)   // mediaState: {audio:true, video:true}
+  updateMediaState({audio?, video?})
+  toJSON()
+}
+```
+
+**`models/Room.js`**
+```javascript
+class Room {
+  addParticipant(socketId, userName): Participant
+  tryAddParticipant(socketId, userName): {success, participant?, error?}  // атомарно: isFull + add
+  removeParticipant(socketId): Participant | undefined
+  getParticipant(socketId): Participant | undefined
+  isFull(): boolean                 // лимит 4
+  isEmpty(): boolean
+  addChatMessage(message): message  // id = crypto.randomUUID()
+  toJSON()
+}
+```
+
+**Service (бизнес-логика):**
+
+**`services/RoomService.js`**
+```javascript
+class RoomService {
+  createRoom(roomId): Room          // + ленивая cleanupEmptyRooms()
+  getRoom(roomId): Room | undefined
+  getOrCreateRoom(roomId): Room
+  roomExists(roomId): boolean
+  addParticipant(roomId, socketId, userName): {success, room?, participant?, error?}  // через Room.tryAddParticipant
+  removeParticipant(roomId, socketId): {participant?, shouldDeleteRoom}
+  updateMediaState(roomId, socketId, {audio?, video?}): boolean
+  addChatMessage(roomId, message): message | null
+  getChatHistory(roomId): Array
+  cleanupEmptyRooms(): number       // TTL-очистка пустых комнат (защита от утечки памяти)
+}
+```
+
+**Controllers (C):**
+
+**`controllers/RoomController.js`** (REST API)
+- **Ответственность:** HTTP-обработчики для управления комнатами до входа
+- **Методы:** `createRoom` (POST — валидирует userName, генерирует roomId через `crypto.randomUUID()`), `getRoom` (GET), `getParticipants` (GET)
+
+**`controllers/SocketController.js`** (WebSocket)
+- **Ответственность:** real-time — вход/выход, чат, media-state, WebRTC-сигналинг
+- **`handleConnection(socket)`:** читает `roomId`/`userName` из `handshake.query`, валидирует, добавляет участника, эмитит `room-joined`
+- **`registerHandlers(socket, roomId)`:** `chat-message`, `media-state`, `offer`, `answer`, `ice-candidate`, `disconnecting`
+- **`isSameRoom(roomId, senderId, targetSocketId)`:** проверка принадлежности цели комнате перед WebRTC-relay
+- Rate limiting через `infrastructure/RateLimiter.js` (5 сообщений/сек)
+
+**Routes:**
+
+**`routes/api.js`**
+- **Ответственность:** Express Router, монтируется на `/api`; маршруты `POST /rooms`, `GET /rooms/:roomId`, `GET /rooms/:roomId/participants`
 
 ### Socket.io Events
+
+Подключение к комнате происходит через `handshake.query` (см. раздел 6). После подключения регистрируются обработчики событий.
 
 #### Client → Server
 
 | Event | Payload | Response | Description |
 |-------|---------|----------|-------------|
-| `join-room` | `{roomId: string, userName: string}` | acknowledgement callback | Вход в комнату |
-| `leave-room` | `{roomId: string}` | — | Выход из комнаты |
-| `offer` | `{roomId: string, targetSocketId: string, sdp: RTCSessionDescriptionInit}` | — | WebRTC offer |
-| `answer` | `{roomId: string, targetSocketId: string, sdp: RTCSessionDescriptionInit}` | — | WebRTC answer |
-| `ice-candidate` | `{roomId: string, targetSocketId: string, candidate: RTCIceCandidateInit}` | — | ICE candidate |
-| `chat-message` | `{roomId: string, message: string}` | — | Текстовое сообщение |
+| (handshake query) | `{roomId, userName}` | `room-joined` или `error` | Вход в комнату при WS-подключении |
+| `chat-message` | `{message: string}` | broadcast | Текстовое сообщение (roomId из сессии) |
+| `media-state` | `{audio?: boolean, video?: boolean}` | broadcast | Изменение состояния медиа |
+| `offer` | `{targetSocketId: string, sdp}` | unicast | WebRTC offer |
+| `answer` | `{targetSocketId: string, sdp}` | unicast | WebRTC answer |
+| `ice-candidate` | `{targetSocketId: string, candidate}` | unicast | ICE candidate |
 
 #### Server → Client (broadcast/emit)
 
 | Event | Payload | Target | Description |
 |-------|---------|--------|-------------|
-| `user-joined` | `{socketId: string, userName: string}` | room | Участник вошел |
-| `user-left` | `{socketId: string, userName: string}` | room | Участник вышел |
-| `chat-message` | `{from: string, fromName: string, message: string, timestamp: number}` | room | Сообщение чата |
-| `offer` | `{fromSocketId: string, sdp: RTCSessionDescriptionInit}` | individual | WebRTC offer |
-| `answer` | `{fromSocketId: string, sdp: RTCSessionDescriptionInit}` | individual | WebRTC answer |
-| `ice-candidate` | `{fromSocketId: string, candidate: RTCIceCandidateInit}` | individual | ICE candidate |
-| `media-state-changed` | `{socketId: string, kind: 'video'\|'audio', enabled: boolean}` | room | Изменение состояния медиа |
+| `room-joined` | `{participants, chatHistory}` | individual | Успешный вход |
+| `error` | `{type, message?}` | individual | validation / room-full / rate-limit |
+| `user-joined` | `{socketId, userName, mediaState}` | room | Участник вошел |
+| `user-left` | `{socketId, userName}` | room | Участник вышел |
+| `system-message` | `{id, type: 'system', text, timestamp}` | room | Вход/выход в чат |
+| `chat-message` | `{from, fromName, message, timestamp}` | room | Сообщение чата |
+| `offer` | `{from, sdp}` | individual | WebRTC offer |
+| `answer` | `{from, sdp}` | individual | WebRTC answer |
+| `ice-candidate` | `{from, candidate}` | individual | ICE candidate |
+| `media-state-changed` | `{socketId, mediaState: {audio, video}}` | room | Изменение состояния медиа |
 
 ---
 
@@ -276,20 +336,21 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
   roomId: string,              // UUID v4
   participants: Map<socketId, Participant>,
   chatHistory: Array<Message>,
-  createdAt: Date
+  createdAt: number,           // Date.now() — используется для TTL-очистки пустых комнат
+  maxParticipants: 4
 }
 ```
+Добавление участника — через атомарный `Room.tryAddParticipant()` (проверка `isFull` + вставка в одном синхронном методе).
 
 #### Participant
 ```javascript
 {
   socketId: string,            // уникальный ID (socket.id)
-  name: string,                // отображаемое имя (≤30 символов)
-  roomId: string,
-  joinedAt: Date,
+  userName: string,            // отображаемое имя (≤30 символов)
+  joinedAt: number,            // Date.now()
   mediaState: {
-    audio: boolean,            // микрофон включен
-    video: boolean             // камера включена
+    audio: boolean,            // микрофон включен (по умолчанию true)
+    video: boolean             // камера включена (по умолчанию true)
   }
 }
 ```
@@ -297,9 +358,11 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
 #### Message
 ```javascript
 {
-  from: string,                // socketId отправителя
-  fromName: string,            // имя отправителя
-  message: string,             // текст (1..1000 символов)
+  id: string,                  // crypto.randomUUID()
+  from: string,                // socketId отправителя (для type: 'user')
+  fromName: string,            // имя отправителя (для type: 'user')
+  message: string,             // текст (1..1000 символов) — для type: 'user'
+  text: string,                // текст системного сообщения — для type: 'system'
   timestamp: number,           // Date.now()
   type: 'user' | 'system'      // тип сообщения
 }
@@ -310,6 +373,7 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
 **Серверная память:**
 - `rooms: Map<roomId, Room>` — все активные комнаты
 - При выходе последнего участника комната и её история полностью удаляются
+- Пустые комнаты (созданные через REST, но без входа по WS) удаляются по TTL (`cleanupEmptyRooms`)
 
 **Клиентская память:**
 - Ничего не сохраняется между перезагрузками (без localStorage)
@@ -346,10 +410,10 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
 
 **Response `201`:**
 ```json
-{ "roomId": "3usl6d", "createdAt": 1789507694392 }
+{ "roomId": "550e8400-e29b-41d4-a716-446655440000", "createdAt": 1789507694392 }
 ```
 
-**Response `400`:** `{ "error": "userName is required" }`
+**Response `400`:** `{ "error": "Имя обязательно" }` (userName валидируется и санитизируется — защита от XSS)
 
 #### `GET /api/rooms/:roomId` — информация о комнате
 
@@ -505,7 +569,7 @@ function validateMessage(message) {
 ```
 1. Пользователь вводит имя на StartScreen
 2. Клик "Создать комнату"
-3. Frontend генерирует roomId (UUID v4)
+3. Frontend: POST /api/rooms {userName} → получает {roomId} (UUID v4)
 4. Navigate к `/room/:roomId`
 5. Автоматический вход в комнату (см. "Вход в комнату")
 ```
@@ -516,13 +580,14 @@ function validateMessage(message) {
 1. Клиент открывает `/room/:roomId`
 2. Если имя не введено → запрос имени
 3. getUserMedia() → получение локального stream
-4. socket.emit('join-room', {roomId, userName}, callback)
-5. Сервер:
-   - Валидация userName и roomId
-   - Проверка лимита (participants.size < 4)
-   - Добавление участника в комнату
+4. Подключение к Socket.io с query {roomId, userName}
+5. Сервер (SocketController.handleConnection):
+   - Валидация userName и roomId из handshake.query
+   - Атомарная проверка лимита (Room.tryAddParticipant, < 4)
+   - При отказе: emit('error', {type: 'validation'|'room-full'}) + disconnect
+   - При успехе: socket.join(roomId)
    - Broadcast 'user-joined' остальным
-   - Callback с participants и chatHistory
+   - emit('room-joined', {participants, chatHistory})
 6. Клиент:
    - Отображение локального видео
    - Для каждого existing participant:
@@ -579,11 +644,12 @@ sequenceDiagram
 1. Участник вводит текст в Chat компонент
 2. Нажатие Enter или кнопки "Отправить"
 3. Валидация на клиенте (не пустое, ≤1000 символов)
-4. socket.emit('chat-message', {roomId, message})
-5. Сервер:
+4. socket.emit('chat-message', {message})   // roomId известен из сессии
+5. Сервер (SocketController.handleChatMessage):
+   - Rate limiting (5 сообщений/сек) — до санитизации
    - Валидация и sanitization (XSS защита)
    - Добавление в chatHistory комнаты
-   - socket.to(roomId).emit('chat-message', {from, fromName, message, timestamp})
+   - io.to(roomId).emit('chat-message', {from, fromName, message, timestamp})
 6. Все клиенты получают сообщение и добавляют в UI
 7. Автопрокрутка чата к последнему сообщению
 ```
@@ -597,8 +663,11 @@ sequenceDiagram
 4. Для video:
    - Выключение: stopTrack(), освобождение устройства
    - Включение: getUserMedia({video: true}), замена track
-5. socket.emit('media-state-changed', {roomId, kind, enabled})
-6. Сервер broadcast всем: media-state-changed
+5. socket.emit('media-state', {audio?, video?})
+6. Сервер (SocketController.handleMediaState):
+   - Валидация boolean-полей
+   - Обновление participant.mediaState в модели
+   - Broadcast фактического mediaState из модели: media-state-changed
 7. Остальные обновляют UI:
    - audio off → иконка перечёркнутого микрофона
    - video off → показать аватар/заглушку
@@ -610,12 +679,15 @@ sequenceDiagram
 1. Клик "Выйти" или закрытие вкладки
 2. socket.on('disconnecting') event на сервере
    - Важно: использовать 'disconnecting', а не 'disconnect'
-   - В 'disconnect' сокет уже покинул комнаты, roomId недоступен
-3. roomManager.leaveRoom(socket.id)
-4. Если последний участник:
+   - В 'disconnect' сокет уже покинул комнаты, broadcast не дойдёт
+3. SocketController.handleDisconnect(socket, roomId) → roomService.removeParticipant(roomId, socket.id)
+   - roomId известен из замыкания registerHandlers
+   - rateLimiter.clear(socket.id)
+4. Если последний участник (shouldDeleteRoom):
    - Удалить комнату и всю историю
 5. Иначе:
    - socket.to(roomId).emit('user-left', {socketId, userName})
+   - Системное сообщение о выходе в чат
 6. Остальные клиенты:
    - Закрывают RTCPeerConnection с ушедшим
    - Удаляют его VideoTile
@@ -629,8 +701,8 @@ sequenceDiagram
 ### Комната заполнена (5-й участник)
 
 **Обработка:**
-- Сервер: атомарная проверка `participants.size < 4` перед добавлением
-- Response: `{success: false, error: 'room-full'}`
+- Сервер: атомарная проверка `Room.tryAddParticipant` (isFull + вставка) перед добавлением
+- При отказе: `socket.emit('error', {type: 'room-full'})` + `socket.disconnect()`
 - Клиент: показать экран "Комната заполнена (4/4)" с кнопкой "Повторить попытку"
 
 ### Отказ в доступе к медиа-устройствам
@@ -687,8 +759,8 @@ track.onended = () => {
   // Выключить соответствующий контрол в UI
   mediaManager.toggleVideo(false) // или toggleAudio(false)
   
-  // Разослать обновление
-  socket.emit('media-state-changed', {roomId, kind: track.kind, enabled: false})
+  // Разослать обновление актуального состояния
+  socket.emit('media-state', { video: false }) // или { audio: false }
 }
 ```
 
@@ -717,21 +789,21 @@ const io = new Server(server, {
 
 **Правильно:**
 ```javascript
-socket.on('disconnecting', (reason) => {
-  // socket.rooms ещё доступны
-  const rooms = Array.from(socket.rooms);
-  rooms.forEach(roomId => {
-    if (roomId !== socket.id) {
-      roomManager.leaveRoom(socket.id)
-    }
-  })
-})
+// SocketController: roomId сохранён в замыкании при registerHandlers
+socket.on('disconnecting', () => this.handleDisconnect(socket, roomId))
+
+handleDisconnect(socket, roomId) {
+  // socket ещё в комнате Socket.io → broadcast дойдёт до остальных
+  const { participant, shouldDeleteRoom } = this.roomService.removeParticipant(roomId, socket.id)
+  this.rateLimiter.clear(socket.id)
+  socket.to(roomId).emit('user-left', { socketId: socket.id, userName: participant.userName })
+}
 ```
 
 **Неправильно:**
 ```javascript
-socket.on('disconnect', (reason) => {
-  // socket.rooms уже пуст, roomId недоступен
+socket.on('disconnect', () => {
+  // socket уже покинул все комнаты → socket.to(roomId) никого не достигнет
 })
 ```
 
@@ -941,25 +1013,30 @@ const server = https.createServer({
 
 ### Rate Limiting
 
-**Chat flooding protection:**
+**Chat flooding protection (`infrastructure/RateLimiter.js`):**
 ```javascript
-// Server-side: 10 сообщений/сек на участника
-const messageRateLimiter = new Map(); // socketId → {count, resetAt}
+// Server-side: 5 сообщений/сек на socketId (sliding window)
+class RateLimiter {
+  constructor(maxMessages = 5, windowMs = 1000) { /* ... */ }
 
-socket.on('chat-message', ({roomId, message}) => {
-  const now = Date.now();
-  const limit = messageRateLimiter.get(socket.id);
-  
-  if (!limit || now > limit.resetAt) {
-    messageRateLimiter.set(socket.id, {count: 1, resetAt: now + 1000});
-  } else if (limit.count >= 10) {
-    return; // Отклонить
-  } else {
-    limit.count++;
+  check(socketId) {
+    const now = Date.now();
+    let times = (this.timestamps.get(socketId) || [])
+      .filter(t => t > now - this.windowMs);   // sliding window
+    if (times.length >= this.maxMessages) return false;
+    times.push(now);
+    this.timestamps.set(socketId, times);
+    return true;
   }
-  
-  // Обработка сообщения
-})
+
+  clear(socketId) { this.timestamps.delete(socketId); }
+}
+
+// SocketController.handleChatMessage: rate limit проверяется ДО санитизации
+if (!this.rateLimiter.check(socket.id)) {
+  socket.emit('error', { type: 'rate-limit' });
+  return;
+}
 ```
 
 ---
@@ -968,39 +1045,65 @@ socket.on('chat-message', ({roomId, message}) => {
 
 ### Unit Tests (Backend)
 
-**RoomManager:**
+**Models (`Room`, `Participant`):**
 ```javascript
-describe('RoomManager', () => {
+describe('Room', () => {
+  test('добавление/удаление участников')
+  test('tryAddParticipant: атомарная проверка лимита 4')
+  test('isFull / isEmpty')
+  test('addChatMessage с id = crypto.randomUUID()')
+})
+describe('Participant', () => {
+  test('mediaState по умолчанию {audio:true, video:true}')
+  test('updateMediaState / toJSON')
+})
+```
+
+**Service (`RoomService`):**
+```javascript
+describe('RoomService', () => {
   test('создание комнаты при первом участнике')
   test('вход в существующую комнату')
-  test('отклонение 5-го участника (лимит)')
+  test('отклонение 5-го участника (лимит room-full)')
   test('удаление комнаты при выходе последнего')
-  test('добавление сообщения в chatHistory')
-  test('валидация userName')
+  test('cleanupEmptyRooms по TTL')
+  test('updateMediaState / addChatMessage / getChatHistory')
 })
 ```
 
 **Coverage target:** 80%
 
-**Tools:** Jest, Node.js test runner
+**Tools:** Vitest (нативный ESM). Файлы в `tests/` зеркалят слои `src/`, без суффикса `.test.`
 
-### Integration Tests (Socket.io)
+### Integration Tests (REST API + Socket.io)
 
 **Scenarios:**
 ```javascript
-describe('Socket.io Events', () => {
-  test('создание комнаты и вход 4 участников')
+describe('RoomController (REST API)', () => {
+  test('POST /api/rooms создаёт комнату, roomId = валидный UUID v4')
+  test('POST /api/rooms отклоняет пустой / XSS userName (400)')
+  test('GET /api/rooms/:roomId (200 / 404)')
+  test('GET /api/rooms/:roomId/participants')
+})
+describe('SocketController (WebSocket)', () => {
+  test('handshake query: room-joined при входе')
+  test('отклонение при невалидных roomId / userName')
   test('отклонение 5-го участника с ошибкой room-full')
-  test('обмен сообщениями в чате между участниками')
-  test('broadcast user-joined при входе')
-  test('broadcast user-left при выходе')
-  test('relay WebRTC signaling (offer/answer/ice)')
+  test('broadcast user-joined / user-left')
+  test('обмен сообщениями в чате + XSS санитизация')
+  test('rate limiting 5 сообщений/сек')
+  test('media-state: валидация boolean + broadcast из модели')
+  test('relay WebRTC offer/answer/ice-candidate')
+  test('НЕ relay в чужую комнату (targetSocketId проверка)')
   test('выход последнего участника → удаление комнаты')
-  test('disconnecting event обрабатывается корректно')
+})
+describe('Integration: REST create → WebSocket join', () => {
+  test('вход в созданную через REST комнату (C1 regression)')
+  test('полный сценарий: create, 2 участника, чат, disconnect')
 })
 ```
 
-**Tools:** Jest + socket.io-client
+**Tools:** Vitest + socket.io-client
 
 ### E2E Tests
 
@@ -1118,9 +1221,11 @@ video-chat-room/
 │   │   │   └── Participant.js
 │   │   ├── services/
 │   │   │   └── RoomService.js
-│   │   └── controllers/
-│   │       ├── RoomController.js   # REST API integration tests
-│   │       └── SocketController.js # WebSocket integration tests
+│   │   ├── controllers/
+│   │   │   ├── RoomController.js   # REST API integration tests
+│   │   │   └── SocketController.js # WebSocket integration tests
+│   │   └── integration/
+│   │       └── RestToWebSocket.js  # REST create → WS join (C1 regression)
 │   ├── certs/                # mkcert SSL certificates (gitignored)
 │   ├── vitest.config.js
 │   ├── package.json
@@ -1145,13 +1250,14 @@ video-chat-room/
 PORT=3000
 NODE_ENV=development
 
-# HTTPS (development)
-SSL_KEY_PATH=./certs/localhost-key.pem
-SSL_CERT_PATH=./certs/localhost.pem
+# HTTPS (development) — пути к сертификатам mkcert
+SSL_CERT_PATH=./certs/localhost+2.pem
+SSL_KEY_PATH=./certs/localhost+2-key.pem
 
 # Socket.io
 PING_TIMEOUT=20000
 PING_INTERVAL=25000
+CORS_ORIGIN=https://localhost:5173
 
 # Logging
 LOG_LEVEL=info
@@ -1177,11 +1283,11 @@ VITE_NODE_ENV=development
 cd client && npm install
 cd ../server && npm install
 
-# 2. Generate HTTPS certificates (mkcert)
+# 2. Generate HTTPS certificates (mkcert) в server/certs/
 mkcert -install
-mkcert localhost 127.0.0.1 ::1
-mv localhost+2.pem server/certs/localhost.pem
-mv localhost+2-key.pem server/certs/localhost-key.pem
+cd server/certs && mkcert localhost 127.0.0.1 ::1 && cd ../..
+# Результат: server/certs/localhost+2.pem и localhost+2-key.pem
+# (имена совпадают с SSL_CERT_PATH / SSL_KEY_PATH в .env)
 
 # 3. Start development servers
 # Terminal 1: Frontend
@@ -1309,28 +1415,28 @@ CMD ["node", "server/src/server.js"]
 
 ### Rate Limiting
 **Вопрос:** Нужна ли защита от флуда в чате?  
-**Предложение:** 10 сообщений в секунду на участника (server-side проверка)  
-**Статус:** TBD → принято для реализации
+**Решение:** 5 сообщений/сек на socketId (sliding window, `infrastructure/RateLimiter.js`), проверка до санитизации  
+**Статус:** ✅ реализовано
 
 ### Logging
 **Вопрос:** Какая стратегия логирования на сервере?  
-**Предложение:** Winston с уровнями error/warn/info; в production логи в файл или stdout (для Docker)  
-**Статус:** TBD → принято для реализации
+**Решение:** Winston (`infrastructure/logger.js`), уровень из `.env` (LOG_LEVEL), вывод в stdout (для Docker)  
+**Статус:** ✅ реализовано
 
 ### Reconnection Timeout
 **Вопрос:** Сколько ждать перед считыванием disconnect?  
-**Предложение:** Socket.io pingTimeout = 20 секунд, pingInterval = 25 секунд  
-**Статус:** TBD → принято для реализации
+**Решение:** Socket.io pingTimeout = 20 сек, pingInterval = 25 сек (из `.env`)  
+**Статус:** ✅ реализовано
 
 ### Room ID Collision
 **Вопрос:** Как обрабатывать коллизию roomId?  
-**Предложение:** UUID v4 достаточно безопасен (вероятность коллизии ~10^-18 при миллионе комнат); explicit collision handling не требуется  
-**Статус:** TBD → принято для реализации
+**Решение:** UUID v4 (`crypto.randomUUID()`) достаточно безопасен (вероятность коллизии ~10^-18); explicit collision handling не требуется  
+**Статус:** ✅ реализовано
 
 ### Video Quality Adaptation
 **Вопрос:** Нужна ли явная настройка битрейта или разрешения?  
 **Предложение:** Оставить WebRTC автоматическую адаптацию; пользовательские настройки качества — out of scope для MVP  
-**Статус:** TBD → принято для реализации
+**Статус:** TBD → принято для реализации (frontend)
 
 ---
 
