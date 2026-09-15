@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '../common/index.js';
 
 /**
  * InviteButton — копирование ссылки-приглашения в буфер обмена.
@@ -12,19 +13,15 @@ function InviteButton() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback: выделение через prompt, если clipboard API недоступен
+      // Fallback: можно добавить альтернативный метод через prompt
       setCopied(false);
     }
   };
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-600"
-    >
+    <Button variant="secondary" onClick={handleCopy}>
       {copied ? 'Ссылка скопирована ✓' : 'Копировать ссылку'}
-    </button>
+    </Button>
   );
 }
 

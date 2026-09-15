@@ -1,7 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import StartScreen from './components/StartScreen.jsx';
-import RoomScreen from './components/RoomScreen.jsx';
-import UnsupportedBrowser from './components/UnsupportedBrowser.jsx';
+import { StartScreen, RoomScreen, UnsupportedBrowser } from './components/room/index.js';
 import { isWebRTCSupported } from './utils/webrtcSupport.js';
 
 function App() {

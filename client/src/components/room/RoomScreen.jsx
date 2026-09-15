@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { useSocket } from '../hooks/useSocket.js';
+import { useSocket } from '../../hooks/useSocket.js';
 import NamePrompt from './NamePrompt.jsx';
 import RoomError from './RoomError.jsx';
-import ParticipantList from './ParticipantList.jsx';
 import InviteButton from './InviteButton.jsx';
+import { ParticipantList } from '../participant/index.js';
 
 /**
  * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты.

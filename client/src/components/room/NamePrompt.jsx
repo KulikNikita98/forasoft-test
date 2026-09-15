@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { validateUserName } from '../utils/validation.js';
-import config from '../config/index.js';
+import { validateUserName } from '../../utils/validation.js';
+import config from '../../config/index.js';
+import { Card, Input, Button } from '../common/index.js';
 
 /**
  * NamePrompt — запрос имени при прямом входе по ссылке-приглашению
@@ -25,37 +26,30 @@ function NamePrompt({ onSubmit }) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-900 px-4">
-      <div className="w-full max-w-md rounded-2xl bg-gray-800 p-8 shadow-xl">
+      <Card className="w-full max-w-md">
         <h1 className="mb-6 text-center text-2xl font-bold text-white">
           Вход в комнату
         </h1>
-        <label htmlFor="userName" className="mb-2 block text-sm font-medium text-gray-300">
-          Ваше имя
-        </label>
-        <input
+        <Input
           id="userName"
-          type="text"
+          label="Ваше имя"
           value={userName}
           maxLength={config.app.maxUsernameLength}
           onChange={(e) => setUserName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
           placeholder="Например, Алекс"
-          className="mb-1 w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-3 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+          error={error}
           autoFocus
         />
-        {error && (
-          <p role="alert" className="mb-2 text-sm text-red-400">
-            {error}
-          </p>
-        )}
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          fullWidth
           onClick={handleSubmit}
-          className="mt-4 w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700"
+          className="mt-4"
         >
           Войти
-        </button>
-      </div>
+        </Button>
+      </Card>
     </div>
   );
 }

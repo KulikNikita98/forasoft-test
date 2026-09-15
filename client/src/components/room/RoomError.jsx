@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { Button } from '../common/index.js';
 
 /**
  * RoomError — экран ошибки входа в комнату (заполнена / сервер недоступен).
@@ -20,20 +21,12 @@ function RoomError({ error }) {
       <h1 className="text-2xl font-semibold text-white">{title}</h1>
       <p className="max-w-md text-gray-300">{description}</p>
       <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white transition hover:bg-blue-700"
-        >
+        <Button variant="primary" onClick={() => window.location.reload()}>
           Повторить
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate('/')}
-          className="rounded-lg bg-gray-700 px-4 py-2 font-semibold text-white transition hover:bg-gray-600"
-        >
+        </Button>
+        <Button variant="secondary" onClick={() => navigate('/')}>
           На главную
-        </button>
+        </Button>
       </div>
     </div>
   );
