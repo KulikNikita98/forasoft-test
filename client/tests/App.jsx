@@ -7,11 +7,10 @@ vi.mock('../src/utils/webrtcSupport.js', () => ({
 }));
 
 // Мокаем экраны — App-тест проверяет только роутинг, не их содержимое
-vi.mock('../src/components/StartScreen.jsx', () => ({
-  default: () => <div>StartScreen stub</div>
-}));
-vi.mock('../src/components/RoomScreen.jsx', () => ({
-  default: () => <div>RoomScreen stub</div>
+vi.mock('../src/components/room/index.js', () => ({
+  StartScreen: () => <div>StartScreen stub</div>,
+  RoomScreen: () => <div>RoomScreen stub</div>,
+  UnsupportedBrowser: () => <div>UnsupportedBrowser stub</div>
 }));
 
 import { isWebRTCSupported } from '../src/utils/webrtcSupport.js';
@@ -26,7 +25,7 @@ describe('App routing', () => {
   it('shows UnsupportedBrowser when WebRTC is not supported', () => {
     isWebRTCSupported.mockReturnValue(false);
     render(<App />);
-    expect(screen.getByText('Браузер не поддерживается')).toBeInTheDocument();
+    expect(screen.getByText('UnsupportedBrowser stub')).toBeInTheDocument();
   });
 
   it('renders StartScreen on / when WebRTC is supported', () => {
