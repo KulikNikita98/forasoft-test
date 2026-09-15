@@ -69,7 +69,8 @@ class RoomManager {
     const participant = {
       socketId,
       userName,
-      joinedAt: new Date()
+      joinedAt: new Date(),
+      mediaState: { audio: true, video: true }
     };
     room.participants.set(socketId, participant);
 

@@ -1028,15 +1028,33 @@ video-chat-room/
 │   │   └── main.jsx
 │   ├── package.json
 │   └── vite.config.js
-├── server/                    # Node.js backend
+├── server/                    # Node.js backend (layered architecture)
 │   ├── src/
-│   │   ├── roomManager.js
-│   │   ├── signalingHandler.js
-│   │   ├── validation.js
-│   │   └── server.js
-│   ├── tests/
-│   │   ├── roomManager.test.js
-│   │   └── signaling.test.js
+│   │   ├── config/            # Configuration layer (reads from .env)
+│   │   │   └── index.js       # PORT, CORS, SSL paths, LOG_LEVEL, Socket.io opts
+│   │   ├── domain/           # Business logic layer
+│   │   │   └── RoomManager.js
+│   │   ├── infrastructure/   # Infrastructure layer
+│   │   │   ├── SignalingHandler.js
+│   │   │   ├── logger.js
+│   │   │   └── ssl.js
+│   │   ├── validation/       # Validation & XSS protection
+│   │   │   ├── constants.js
+│   │   │   ├── messages.js    # localized error messages (ru)
+│   │   │   ├── userName.js
+│   │   │   ├── roomId.js
+│   │   │   ├── message.js
+│   │   │   └── index.js
+│   │   ├── setup/            # App composition root
+│   │   │   └── app.js         # createApp(): wires all layers together
+│   │   └── server.js         # Entry point: only listen() + graceful shutdown
+│   ├── tests/                # Test structure mirrors src/ layers
+│   │   ├── domain/
+│   │   │   └── RoomManager.js
+│   │   └── infrastructure/
+│   │       └── SignalingHandler.js
+│   ├── certs/                # mkcert SSL certificates (gitignored)
+│   ├── vitest.config.js
 │   ├── package.json
 │   └── .env.example
 ├── docs/

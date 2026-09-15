@@ -44,19 +44,21 @@
 
 - [ ] 1. **Инициализация проекта сервера**
   - Настроить структуру `server/`, зависимости, базовый HTTPS + Socket.io сервер
-  - 1.1. Создать `server/` со структурой (`src/`, `tests/`), инициализировать `package.json`
+  - Слоистая архитектура: `config/` (конфигурация из .env), `domain/` (бизнес-логика), `infrastructure/` (Socket.io-обработчики, логгер, SSL), `validation/`, `setup/` (сборка приложения)
+  - 1.1. Создать `server/` со структурой (`src/config`, `src/domain`, `src/infrastructure`, `src/validation`, `src/setup`, `tests/`), инициализировать `package.json`
   - 1.2. Установить зависимости: `express`, `socket.io`, `dotenv`, `winston`
-  - 1.3. Создать `server.js` — HTTPS-сервер (Express) + инициализация Socket.io с `pingTimeout: 20000`, `pingInterval: 25000`. Зависит от задачи 25 (сначала сертификаты, потом HTTPS-сервер)
-  - 1.4. Добавить health-check endpoint `GET /health` → `{status: 'ok'}`
-  - 1.5. Настроить раздачу статики из `client/dist` (для production)
+  - 1.3. `config/index.js` — чтение из `.env`: PORT, CORS_ORIGIN, SSL_CERT_PATH/SSL_KEY_PATH, LOG_LEVEL, Socket.io опции (`pingTimeout: 20000`, `pingInterval: 25000`). Зависит от задачи 25 (сначала сертификаты)
+  - 1.4. `infrastructure/ssl.js` (загрузка сертификатов по путям из .env), `infrastructure/logger.js` (winston, уровень из .env)
+  - 1.5. `setup/app.js` — единая точка сборки (`createApp()`): Express + health-check `GET /health`, HTTPS-сервер, Socket.io, подключение обработчиков
+  - 1.6. `server.js` — только запуск: `server.listen()` + graceful shutdown (SIGTERM)
   - _Requirements: F-06, NFR-COMPAT, Design: 3, 4 (server.js), 8 (heartbeat), 12_
 
-- [ ] 2. **RoomManager модуль**
+- [ ] 2. **RoomManager модуль (domain-слой)**
   - Реализовать управление комнатами и участниками в памяти
   - После задачи 1
-  - 2.1. Класс `RoomManager` со структурами `rooms: Map<roomId, Room>`
+  - 2.1. Класс `RoomManager` (`src/domain/RoomManager.js`) со структурами `rooms: Map<roomId, Room>`
   - 2.2. `createRoom(roomId)` — создание комнаты при первом участнике
-  - 2.3. `joinRoom(roomId, socketId, userName)` — атомарная проверка лимита `< 4`, возврат `{success, participants, chatHistory, error}`
+  - 2.3. `joinRoom(roomId, socketId, userName)` — атомарная проверка лимита `< 4`, возврат `{success, participants, chatHistory, error}`; участник получает `mediaState: {audio, video}` (по умолчанию true)
   - 2.4. `leaveRoom(socketId)` — удаление участника, определение `shouldDeleteRoom` (последний вышел)
   - 2.5. Удаление комнаты и истории при выходе последнего участника
   - 2.6. `addChatMessage` / `getChatHistory` — работа с историей сообщений
@@ -75,11 +77,11 @@
 - [ ] 4. **Socket.io события: вход и выход**
   - Обработчики join-room (с acknowledgement), leave-room, disconnecting
   - После задач 2, 3
-  - 4.1. `SignalingHandler` — регистрация обработчиков Socket.io
+  - 4.1. `SignalingHandler` (`src/infrastructure/SignalingHandler.js`) — регистрация обработчиков Socket.io
   - 4.2. `join-room` с acknowledgement callback: валидация → лимит → добавление → ack `{success, participants, chatHistory}` или `{success: false, error}`
   - 4.3. Broadcast `user-joined` остальным участникам комнаты
   - 4.4. Обработчик `leave-room` и `disconnecting` (НЕ `disconnect` — roomId ещё доступен), broadcast `user-left`
-  - 4.5. Системные сообщения о входе/выходе в чат (`type: 'system'`)
+  - 4.5. Системные сообщения о входе/выходе в чат (`type: 'system'`); сообщение о входе добавляется в историю ПОСЛЕ отправки ack (вошедший не видит сообщение о собственном входе)
   - _Requirements: F-01, F-04, F-16, F-17, F-18, п.28, п.29, п.35, Design: 4, 6 (ack), 7, 8 (disconnecting)_
 
 - [ ] 5. **Socket.io события: текстовый чат**
@@ -239,7 +241,7 @@
   - 21.1. RoomManager: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
   - 21.2. Валидация покрывается косвенно через integration/интеграционные проверки обработчиков; отдельные unit-тесты модуля `validation/` не пишем (решение по итогам ревью)
   - 21.3. Настроить Vitest (нативная поддержка ESM), скрипт `npm test`, coverage report. Альтернатива: Jest с `--experimental-vm-modules` для ESM
-  - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит структуру `src/` (например, `src/RoomManager.js` → `tests/RoomManager.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
+  - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит слои `src/` (например, `src/domain/RoomManager.js` → `tests/domain/RoomManager.js`, `src/infrastructure/SignalingHandler.js` → `tests/infrastructure/SignalingHandler.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
   - _Requirements: F-05, п.8, п.9, п.24, п.38, Design: 11 (Unit tests)_
 
 - [ ] 22. **Integration-тесты Socket.io**
