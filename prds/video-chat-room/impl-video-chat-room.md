@@ -120,7 +120,7 @@
 
 ## Frontend
 
-- [ ] 8. **Инициализация React проекта**
+- [x] 8. **Инициализация React проекта**
   - Настроить структуру `client/`, Vite, React Router, Tailwind CSS
   - 8.1. Создать `client/` через Vite (`react` template), структура `components/`, `hooks/`, `services/`, `utils/`
   - 8.2. Установить зависимости: `react-router-dom`, `socket.io-client`; dev: `tailwindcss`, `@testing-library/react`, `@testing-library/jest-dom`, `vitest`, `jsdom`
