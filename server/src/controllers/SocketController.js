@@ -93,7 +93,8 @@ class SocketController {
     socket.on('offer', (payload) => this.handleOffer(socket, roomId, payload));
     socket.on('answer', (payload) => this.handleAnswer(socket, roomId, payload));
     socket.on('ice-candidate', (payload) => this.handleIceCandidate(socket, roomId, payload));
-    socket.on('disconnect', () => this.handleDisconnect(socket, roomId));
+    // 'disconnecting' (не 'disconnect'): socket ещё в комнате Socket.io, broadcast доходит
+    socket.on('disconnecting', () => this.handleDisconnect(socket, roomId));
   }
 
   /**
@@ -102,20 +103,20 @@ class SocketController {
   handleChatMessage(socket, roomId, payload) {
     const { message } = payload || {};
 
-    // Валидация сообщения
+    // Rate limiting первым — дешёвая проверка до дорогой санитизации (DOMPurify)
+    if (!this.rateLimiter.check(socket.id)) {
+      socket.emit('error', { type: 'rate-limit' });
+      this.logger.warn(`Rate limit exceeded for ${socket.id} in room ${roomId}`);
+      return;
+    }
+
+    // Валидация + санитизация сообщения
     const messageCheck = processMessage(message);
     if (!messageCheck.valid) {
       return;
     }
 
     const safeMessage = messageCheck.value;
-
-    // Rate limiting
-    if (!this.rateLimiter.check(socket.id)) {
-      socket.emit('error', { type: 'rate-limit' });
-      this.logger.warn(`Rate limit exceeded for ${socket.id} in room ${roomId}`);
-      return;
-    }
 
     const room = this.roomService.getRoom(roomId);
     if (!room) return;
@@ -149,17 +150,44 @@ class SocketController {
   handleMediaState(socket, roomId, payload) {
     const { audio, video } = payload || {};
 
-    const updated = this.roomService.updateMediaState(roomId, socket.id, { audio, video });
+    // Валидация: принимаем только boolean (или отсутствие поля)
+    const update = {};
+    if (typeof audio === 'boolean') update.audio = audio;
+    if (typeof video === 'boolean') update.video = video;
 
+    // Нет валидных полей — игнорируем
+    if (Object.keys(update).length === 0) return;
+
+    const updated = this.roomService.updateMediaState(roomId, socket.id, update);
     if (!updated) return;
+
+    // Взять фактическое состояние из модели (а не сырой payload),
+    // чтобы участники получили полное и согласованное mediaState
+    const room = this.roomService.getRoom(roomId);
+    const participant = room?.getParticipant(socket.id);
+    if (!participant) return;
 
     // Broadcast изменения состояния медиа всем остальным
     socket.to(roomId).emit('media-state-changed', {
       socketId: socket.id,
-      mediaState: { audio, video }
+      mediaState: participant.mediaState
     });
 
     this.logger.info(`Media state updated for ${socket.id} in room ${roomId}`);
+  }
+
+  /**
+   * Проверить, что targetSocketId и отправитель находятся в одной комнате.
+   * Защита от relay в чужую комнату (spoofing/зондирование socketId).
+   * @param {string} roomId
+   * @param {string} senderId
+   * @param {string} targetSocketId
+   * @returns {boolean}
+   */
+  isSameRoom(roomId, senderId, targetSocketId) {
+    const room = this.roomService.getRoom(roomId);
+    if (!room) return false;
+    return room.getParticipant(senderId) && room.getParticipant(targetSocketId);
   }
 
   /**
@@ -169,6 +197,12 @@ class SocketController {
     const { targetSocketId, sdp } = payload || {};
 
     if (!targetSocketId || !sdp) return;
+
+    // Проверка: цель в той же комнате, что и отправитель
+    if (!this.isSameRoom(roomId, socket.id, targetSocketId)) {
+      this.logger.warn(`Rejected offer from ${socket.id} to ${targetSocketId} (not in same room)`);
+      return;
+    }
 
     // Переслать offer целевому участнику
     this.io.to(targetSocketId).emit('offer', {
@@ -187,6 +221,11 @@ class SocketController {
 
     if (!targetSocketId || !sdp) return;
 
+    if (!this.isSameRoom(roomId, socket.id, targetSocketId)) {
+      this.logger.warn(`Rejected answer from ${socket.id} to ${targetSocketId} (not in same room)`);
+      return;
+    }
+
     // Переслать answer целевому участнику
     this.io.to(targetSocketId).emit('answer', {
       from: socket.id,
@@ -203,6 +242,11 @@ class SocketController {
     const { targetSocketId, candidate } = payload || {};
 
     if (!targetSocketId || !candidate) return;
+
+    if (!this.isSameRoom(roomId, socket.id, targetSocketId)) {
+      this.logger.warn(`Rejected ICE candidate from ${socket.id} to ${targetSocketId} (not in same room)`);
+      return;
+    }
 
     // Переслать ICE candidate целевому участнику
     this.io.to(targetSocketId).emit('ice-candidate', {

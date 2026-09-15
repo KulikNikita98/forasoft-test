@@ -46,6 +46,35 @@ describe('RoomController (REST API)', () => {
       expect(body.createdAt).toBeDefined();
     });
 
+    it('should generate a valid UUID v4 roomId (C1)', async () => {
+      const res = await fetch(`${baseUrl}/api/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: 'Alice' })
+      });
+      const body = await res.json();
+      const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(body.roomId).toMatch(UUID_V4);
+    });
+
+    it('should reject empty/whitespace userName', async () => {
+      const res = await fetch(`${baseUrl}/api/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: '   ' })
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject XSS userName (M1)', async () => {
+      const res = await fetch(`${baseUrl}/api/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: '<script>alert(1)</script>' })
+      });
+      expect(res.status).toBe(400);
+    });
+
     it('should return 400 without userName', async () => {
       const res = await fetch(`${baseUrl}/api/rooms`, {
         method: 'POST',

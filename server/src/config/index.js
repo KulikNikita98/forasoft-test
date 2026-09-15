@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const config = {
-  port: parseInt(process.env.PORT) || 3000,
+  port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   logLevel: process.env.LOG_LEVEL || 'info',
   corsOrigin: process.env.CORS_ORIGIN || 'https://localhost:5173',
@@ -18,8 +18,8 @@ const config = {
       methods: ['GET', 'POST'],
       credentials: true
     },
-    pingTimeout: parseInt(process.env.PING_TIMEOUT) || 20000,
-    pingInterval: parseInt(process.env.PING_INTERVAL) || 25000
+    pingTimeout: parseInt(process.env.PING_TIMEOUT, 10) || 20000,
+    pingInterval: parseInt(process.env.PING_INTERVAL, 10) || 25000
   }
 };
 

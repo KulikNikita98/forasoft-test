@@ -1,12 +1,19 @@
 import Room from '../models/Room.js';
 
+// Пустая комната живёт не дольше этого времени (мс) до автоочистки
+const EMPTY_ROOM_TTL_MS = 5 * 60 * 1000; // 5 минут
+
 /**
  * RoomService — управление комнатами и участниками
  * Бизнес-логика для работы с комнатами видеочата
  */
 class RoomService {
-  constructor() {
+  /**
+   * @param {{ emptyRoomTtlMs?: number }} [options]
+   */
+  constructor(options = {}) {
     this.rooms = new Map(); // roomId -> Room
+    this.emptyRoomTtlMs = options.emptyRoomTtlMs ?? EMPTY_ROOM_TTL_MS;
   }
 
   /**
@@ -15,9 +22,30 @@ class RoomService {
    * @returns {Room}
    */
   createRoom(roomId) {
+    // Ленивая очистка «осиротевших» пустых комнат при каждом создании
+    this.cleanupEmptyRooms();
+
     const room = new Room(roomId);
     this.rooms.set(roomId, room);
     return room;
+  }
+
+  /**
+   * Удалить пустые комнаты, существующие дольше TTL.
+   * Защита от утечки памяти: комнаты, созданные через REST,
+   * в которые никто не вошёл по WebSocket, не остаются навсегда.
+   * @returns {number} количество удалённых комнат
+   */
+  cleanupEmptyRooms() {
+    const now = Date.now();
+    let removed = 0;
+    for (const [roomId, room] of this.rooms) {
+      if (room.isEmpty() && now - room.createdAt > this.emptyRoomTtlMs) {
+        this.rooms.delete(roomId);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /**
@@ -70,12 +98,13 @@ class RoomService {
   addParticipant(roomId, socketId, userName) {
     const room = this.getOrCreateRoom(roomId);
 
-    if (room.isFull()) {
-      return { success: false, error: 'room-full' };
+    // Атомарная проверка лимита + вставка (инвариант живёт в модели)
+    const result = room.tryAddParticipant(socketId, userName);
+    if (!result.success) {
+      return { success: false, error: result.error };
     }
 
-    const participant = room.addParticipant(socketId, userName);
-    return { success: true, room, participant };
+    return { success: true, room, participant: result.participant };
   }
 
   /**

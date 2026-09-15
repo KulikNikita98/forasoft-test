@@ -1,3 +1,6 @@
+import crypto from 'crypto';
+import { processUserName } from '../validation/userName.js';
+
 /**
  * RoomController — REST API для управления комнатами
  */
@@ -18,15 +21,19 @@ class RoomController {
     try {
       const { userName } = req.body;
 
-      if (!userName) {
-        return res.status(400).json({ error: 'userName is required' });
+      // Валидация + санитизация имени (защита от XSS и log injection)
+      const nameCheck = processUserName(userName);
+      if (!nameCheck.valid) {
+        return res.status(400).json({ error: nameCheck.error });
       }
 
-      // Генерация roomId
+      const safeUserName = nameCheck.value;
+
+      // Генерация roomId (UUID v4)
       const roomId = this.generateRoomId();
       const room = this.roomService.createRoom(roomId);
 
-      this.logger.info(`Room created: ${roomId} by user ${userName}`);
+      this.logger.info(`Room created: ${roomId} by user ${safeUserName}`);
 
       res.status(201).json({
         roomId: room.roomId,
@@ -83,11 +90,11 @@ class RoomController {
   };
 
   /**
-   * Генерация уникального roomId (6 символов)
+   * Генерация уникального roomId (UUID v4)
    * @private
    */
   generateRoomId() {
-    return Math.random().toString(36).substring(2, 8);
+    return crypto.randomUUID();
   }
 }
 

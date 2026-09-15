@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import Participant from './Participant.js';
 
 /**
@@ -25,6 +26,23 @@ class Room {
     const participant = new Participant(socketId, userName);
     this.participants.set(socketId, participant);
     return participant;
+  }
+
+  /**
+   * Атомарно проверить лимит и добавить участника.
+   * Проверка `isFull` и вставка выполняются в одном синхронном методе,
+   * что гарантирует атомарность в single-threaded event loop —
+   * между проверкой и вставкой не может вклиниться другое подключение.
+   * @param {string} socketId
+   * @param {string} userName
+   * @returns {{ success: boolean, participant?: Participant, error?: string }}
+   */
+  tryAddParticipant(socketId, userName) {
+    if (this.isFull()) {
+      return { success: false, error: 'room-full' };
+    }
+    const participant = this.addParticipant(socketId, userName);
+    return { success: true, participant };
   }
 
   /**
@@ -70,7 +88,7 @@ class Room {
    */
   addChatMessage(message) {
     const chatMessage = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: crypto.randomUUID(),
       ...message
     };
     this.chatHistory.push(chatMessage);

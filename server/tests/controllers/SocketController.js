@@ -204,4 +204,88 @@ describe('SocketController (integration)', () => {
 
     expect(roomService.roomExists(VALID_ROOM)).toBe(false);
   });
+
+  it('should relay WebRTC answer to target', async () => {
+    const alice = connect(VALID_ROOM, 'Alice');
+    await waitFor(alice, 'room-joined');
+    const bob = connect(VALID_ROOM, 'Bob');
+    await waitFor(bob, 'room-joined');
+
+    const bobJoined = await waitFor(alice, 'user-joined');
+    const bobSocketId = bobJoined.socketId;
+
+    const answerReceived = waitFor(bob, 'answer');
+    alice.emit('answer', { targetSocketId: bobSocketId, sdp: { type: 'answer', sdp: 'fake' } });
+
+    const payload = await answerReceived;
+    expect(payload.from).toBeDefined();
+    expect(payload.sdp).toEqual({ type: 'answer', sdp: 'fake' });
+  });
+
+  it('should relay ICE candidate to target', async () => {
+    const alice = connect(VALID_ROOM, 'Alice');
+    await waitFor(alice, 'room-joined');
+    const bob = connect(VALID_ROOM, 'Bob');
+    await waitFor(bob, 'room-joined');
+
+    const bobJoined = await waitFor(alice, 'user-joined');
+    const bobSocketId = bobJoined.socketId;
+
+    const iceReceived = waitFor(bob, 'ice-candidate');
+    alice.emit('ice-candidate', { targetSocketId: bobSocketId, candidate: { candidate: 'fake' } });
+
+    const payload = await iceReceived;
+    expect(payload.from).toBeDefined();
+    expect(payload.candidate).toEqual({ candidate: 'fake' });
+  });
+
+  it('should NOT relay offer to a socket in a different room (M2)', async () => {
+    const ROOM_A = '11111111-1111-4111-8111-111111111111';
+    const ROOM_B = '22222222-2222-4222-8222-222222222222';
+
+    const alice = connect(ROOM_A, 'Alice');
+    await waitFor(alice, 'room-joined');
+    const bob = connect(ROOM_B, 'Bob');
+    await waitFor(bob, 'room-joined');
+
+    // Bob's socketId — Alice его не знает штатно; берём из сервиса
+    const bobId = Array.from(roomService.getRoom(ROOM_B).participants.keys())[0];
+
+    let received = false;
+    bob.on('offer', () => { received = true; });
+
+    alice.emit('offer', { targetSocketId: bobId, sdp: { type: 'offer', sdp: 'x' } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(received).toBe(false); // relay в чужую комнату заблокирован
+  });
+
+  it('should ignore media-state with non-boolean payload (M4)', async () => {
+    const alice = connect(VALID_ROOM, 'Alice');
+    await waitFor(alice, 'room-joined');
+    const bob = connect(VALID_ROOM, 'Bob');
+    await waitFor(bob, 'room-joined');
+
+    let received = false;
+    alice.on('media-state-changed', () => { received = true; });
+
+    bob.emit('media-state', { audio: 'false', video: 'nope' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(received).toBe(false); // невалидный payload игнорируется
+  });
+
+  it('should broadcast full mediaState from model, not raw payload (M4)', async () => {
+    const alice = connect(VALID_ROOM, 'Alice');
+    await waitFor(alice, 'room-joined');
+    const bob = connect(VALID_ROOM, 'Bob');
+    await waitFor(bob, 'room-joined');
+
+    const mediaChanged = waitFor(alice, 'media-state-changed');
+    // Только audio; video должен прийти из модели (true по умолчанию)
+    bob.emit('media-state', { audio: false });
+
+    const payload = await mediaChanged;
+    expect(payload.mediaState).toEqual({ audio: false, video: true });
+  });
 });

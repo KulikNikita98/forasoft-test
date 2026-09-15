@@ -43,6 +43,24 @@ describe('Room', () => {
     expect(room.isEmpty()).toBe(false);
   });
 
+  it('should atomically add participant via tryAddParticipant', () => {
+    const result = room.tryAddParticipant('s1', 'Alice');
+    expect(result.success).toBe(true);
+    expect(result.participant.userName).toBe('Alice');
+    expect(room.participants.size).toBe(1);
+  });
+
+  it('should reject via tryAddParticipant when room is full (C2)', () => {
+    room.tryAddParticipant('s1', 'A');
+    room.tryAddParticipant('s2', 'B');
+    room.tryAddParticipant('s3', 'C');
+    room.tryAddParticipant('s4', 'D');
+    const result = room.tryAddParticipant('s5', 'E');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('room-full');
+    expect(room.participants.size).toBe(4);
+  });
+
   it('should add chat message with generated id', () => {
     const msg = room.addChatMessage({ type: 'user', message: 'Hi' });
     expect(msg.id).toBeDefined();
