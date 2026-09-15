@@ -2,11 +2,18 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Date** | 2026-09-15 |
-| **Status** | Draft |
+| **Version** | 2.0 |
+| **Date** | 2026-09-16 |
+| **Status** | In Progress |
 | **Feature** | video-chat-room |
-| **Based on** | PRD: `docs/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v1.0 |
+| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.0 |
+
+### История версий
+
+| Версия | Дата | Изменения |
+|--------|------|-----------|
+| 1.0 | 2026-09-15 | Первоначальный план: слоистая архитектура backend, Socket.io `join-room` |
+| 2.0 | 2026-09-16 | Переработка backend-задач (1–6, 10–11, 21–22) под **MVC + сервисный слой** и REST API; вход в комнату через query при WebSocket-подключении; уточнены соглашения по тестам (зеркалирование слоёв `src/`) |
 
 > Каждая задача рассчитана на ≤ 1 рабочий день и оформляется одним MR/PR.
 > `_Requirements_` ссылается на нумерованные требования PRD раздел 4 (F-XX или № пункта); `_Design_` — на разделы TDD (1–14).

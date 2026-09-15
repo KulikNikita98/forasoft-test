@@ -2,11 +2,18 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Date** | 2026-09-15 |
-| **Status** | Draft |
+| **Version** | 2.0 |
+| **Date** | 2026-09-16 |
+| **Status** | In Progress |
 | **Feature** | video-chat-room |
-| **Based on** | PRD: `docs/prd-video-chat-room.md` v1.0 |
+| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0 |
+
+### История версий
+
+| Версия | Дата | Изменения |
+|--------|------|-----------|
+| 1.0 | 2026-09-15 | Первоначальная версия: слоистая архитектура, Socket.io `join-room` с acknowledgement |
+| 2.0 | 2026-09-16 | Переход на **MVC + сервисный слой**; добавлен REST API (Express) для управления комнатами; вход в комнату через `handshake.query` при WebSocket-подключении вместо события `join-room`; единый объект конфигурации; структура тестов зеркалит слои `src/` |
 
 ---
 
@@ -16,7 +23,7 @@
 Веб-приложение для группового видеозвонка с текстовым чатом, рассчитанное на **до 4 участников одновременно**. Пользователь открывает приложение, вводит отображаемое имя, создаёт комнату и делится ссылкой-приглашением; остальные присоединяются по этой ссылке. Внутри комнаты все видят и слышат друг друга в реальном времени и могут переписываться в общем чате.
 
 ### Ссылка на PRD
-`docs/prd-video-chat-room.md` — Product Requirements Document v1.0
+`prds/video-chat-room/prd-video-chat-room.md` — Product Requirements Document v1.0
 
 ### Проблема
 Небольшим группам нужен мгновенный способ созвониться «лицом к лицу» прямо в браузере — без регистрации, установки приложений и сложной настройки.
@@ -39,11 +46,12 @@
 ## 2. Current Architecture & Codebase Summary
 
 ### Статус проекта
-**Greenfield проект** — кодовая база отсутствует. Репозиторий содержит только документацию:
-- `docs/prd-video-chat-room.md` — Product Requirements Document
+Backend реализован (MVC + сервисный слой). Документация:
+- `prds/video-chat-room/prd-video-chat-room.md` — Product Requirements Document
+- `prds/video-chat-room/design-video-chat-room.md` — этот TDD
+- `prds/video-chat-room/impl-video-chat-room.md` — Implementation Plan
 - `docs/prd-design.mdc` — правила генерации TDD
 - `docs/prd-tasks.mdc` — правила генерации плана задач
-- `claude.md` — контекст проекта и workflow
 
 ### Просмотренные файлы
 | Путь | Компонент | Назначение |
@@ -1116,10 +1124,14 @@ video-chat-room/
 │   ├── vitest.config.js
 │   ├── package.json
 │   └── .env.example
+├── prds/
+│   └── video-chat-room/
+│       ├── prd-video-chat-room.md   # PRD
+│       ├── design-video-chat-room.md # TDD (this doc)
+│       └── impl-video-chat-room.md   # Implementation Plan
 ├── docs/
-│   ├── prd-video-chat-room.md
-│   ├── design-video-chat-room.md
-│   └── README.md
+│   ├── prd-design.mdc                # TDD generation rules
+│   └── prd-tasks.mdc                 # Implementation Plan generation rules
 ├── .gitignore
 └── README.md
 ```
