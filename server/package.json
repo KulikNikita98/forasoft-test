@@ -1,0 +1,28 @@
+{
+  "name": "video-chat-server",
+  "version": "1.0.0",
+  "description": "WebRTC video chat server with Socket.io signaling",
+  "main": "src/server.js",
+  "type": "module",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "vitest"
+  },
+  "keywords": [
+    "webrtc",
+    "video-chat",
+    "socket.io"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "winston": "^3.19.0"
+  }
+}
