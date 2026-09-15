@@ -22,6 +22,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "isomorphic-dompurify": "^4.2.0",
     "socket.io": "^4.8.3",
     "winston": "^3.19.0"
   },

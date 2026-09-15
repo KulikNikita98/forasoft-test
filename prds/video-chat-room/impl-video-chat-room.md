@@ -65,9 +65,11 @@
 - [ ] 3. **Валидация и XSS-защита (Backend)**
   - Реализовать валидацию входных данных и санитизацию для защиты от XSS
   - После задачи 1
-  - 3.1. Модуль `validation.js` с регулярками: `userName` `/^[\p{L}\p{N} _-]{1,30}$/u`, `roomId` (UUID v4), `message` (1..1000 символов, trim)
-  - 3.2. Функция `sanitizeUserName` (DOMPurify/isomorphic-dompurify)
-  - 3.3. Санитизация текста сообщений перед сохранением в историю
+  - 3.1. Директория `validation/` с разбивкой по доменным областям: `userName.js`, `roomId.js`, `message.js` + общий реэкспорт `index.js`. Регулярки: `userName` `/^[\p{L}\p{N} _-]{1,30}$/u`, `roomId` (UUID v4), `message` (1..1000 символов, trim)
+  - 3.2. Переиспользуемые константы вынесены в `validation/constants.js` (паттерны, лимиты длины, опции DOMPurify), локализованные сообщения об ошибках — в `validation/messages.js` (русский язык)
+  - 3.3. Функция `sanitizeUserName` (DOMPurify/isomorphic-dompurify)
+  - 3.4. Санитизация текста сообщений перед сохранением в историю
+  - 3.5. Функции `processUserName` / `processMessage` — комплексная обработка (санитизация + валидация) с единым возвращаемым контрактом `{valid, value?, error?}`
   - _Requirements: п.38, п.39, п.24, п.40, NFR-SEC, Design: 6 (validation), 10_
 
 - [ ] 4. **Socket.io события: вход и выход**
@@ -235,8 +237,9 @@
   - Покрыть тестами серверную логику, цель 80% coverage
   - После задач 2, 3
   - 21.1. RoomManager: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
-  - 21.2. Валидация: userName (регулярка, длина), message (пустое, длина), roomId (UUID)
+  - 21.2. Валидация покрывается косвенно через integration/интеграционные проверки обработчиков; отдельные unit-тесты модуля `validation/` не пишем (решение по итогам ревью)
   - 21.3. Настроить Vitest (нативная поддержка ESM), скрипт `npm test`, coverage report. Альтернатива: Jest с `--experimental-vm-modules` для ESM
+  - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит структуру `src/` (например, `src/RoomManager.js` → `tests/RoomManager.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
   - _Requirements: F-05, п.8, п.9, п.24, п.38, Design: 11 (Unit tests)_
 
 - [ ] 22. **Integration-тесты Socket.io**
