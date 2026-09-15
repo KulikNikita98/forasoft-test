@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 2.1 |
+| **Version** | 2.2 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
@@ -15,6 +15,7 @@
 | 1.0 | 2026-09-15 | Первоначальная версия: слоистая архитектура, Socket.io `join-room` с acknowledgement |
 | 2.0 | 2026-09-16 | Переход на **MVC + сервисный слой**; добавлен REST API (Express) для управления комнатами; вход в комнату через `handshake.query` при WebSocket-подключении вместо события `join-room`; единый объект конфигурации; структура тестов зеркалит слои `src/` |
 | 2.1 | 2026-09-16 | После code review: (1) `Room.tryAddParticipant()` — атомарная проверка лимита 4 участников; (2) WebRTC signaling: проверка `targetSocketId` в той же комнате перед relay (требование 6.4); (3) TTL-очистка пустых комнат (защита от утечки памяти); (4) `roomId` генерируется через `crypto.randomUUID()` (UUID v4); (5) интеграционный тест REST→WebSocket |
+| 2.2 | 2026-09-16 | Решения по frontend: структура `components/hooks/services/utils`, **Tailwind CSS** для стилей, полное тестирование (Vitest + React Testing Library для компонентов + E2E Playwright); `services/api.js` — REST-клиент |
 
 ---
 
@@ -1167,7 +1168,7 @@ video-chat-room/
 │   │   ├── index.html
 │   │   └── favicon.ico
 │   ├── src/
-│   │   ├── components/
+│   │   ├── components/          # UI-компоненты
 │   │   │   ├── StartScreen.jsx
 │   │   │   ├── RoomScreen.jsx
 │   │   │   ├── VideoGrid.jsx
@@ -1175,17 +1176,27 @@ video-chat-room/
 │   │   │   ├── Controls.jsx
 │   │   │   ├── Chat.jsx
 │   │   │   └── ParticipantList.jsx
-│   │   ├── hooks/
+│   │   ├── hooks/              # React-хуки
 │   │   │   ├── useMediaManager.js
 │   │   │   ├── usePeerConnection.js
 │   │   │   └── useSocket.js
-│   │   ├── utils/
+│   │   ├── services/          # Классы-сервисы (side-effect логика)
 │   │   │   ├── MediaManager.js
 │   │   │   ├── PeerConnectionManager.js
+│   │   │   └── api.js          # REST-клиент (POST /api/rooms и т.д.)
+│   │   ├── utils/             # Чистые утилиты
 │   │   │   └── validation.js
 │   │   ├── App.jsx
-│   │   └── main.jsx
+│   │   ├── main.jsx
+│   │   └── index.css          # Tailwind-директивы
+│   ├── tests/                 # Структура зеркалит src/ (Vitest + RTL)
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   └── utils/
 │   ├── package.json
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── vitest.config.js
 │   └── vite.config.js
 ├── server/                    # Node.js backend (MVC + service layer)
 │   ├── src/

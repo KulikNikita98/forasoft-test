@@ -121,13 +121,15 @@
 ## Frontend
 
 - [ ] 8. **Инициализация React проекта**
-  - Настроить структуру `client/`, Vite, React Router, базовые стили
-  - 8.1. Создать `client/` через Vite (`react` template), структура `components/`, `hooks/`, `utils/`
-  - 8.2. Установить зависимости: `react-router-dom`, `socket.io-client`
-  - 8.3. Настроить `vite.config.js` (HTTPS для dev, proxy для API)
-  - 8.4. Настроить роутинг: `/` → StartScreen, `/room/:roomId` → RoomScreen
-  - 8.5. Проверка поддержки WebRTC при загрузке (`window.RTCPeerConnection`)
-  - _Requirements: F-02, F-04, п.36, NFR-COMPAT, Design: 4, 8 (нет WebRTC), 12_
+  - Настроить структуру `client/`, Vite, React Router, Tailwind CSS
+  - 8.1. Создать `client/` через Vite (`react` template), структура `components/`, `hooks/`, `services/`, `utils/`
+  - 8.2. Установить зависимости: `react-router-dom`, `socket.io-client`; dev: `tailwindcss`, `@testing-library/react`, `@testing-library/jest-dom`, `vitest`, `jsdom`
+  - 8.3. Настроить Tailwind CSS (`tailwind.config.js`, директивы в `index.css`)
+  - 8.4. Настроить `vite.config.js` (HTTPS для dev с mkcert-сертификатами, proxy для API/WS на backend)
+  - 8.5. Настроить роутинг: `/` → StartScreen, `/room/:roomId` → RoomScreen
+  - 8.6. Проверка поддержки WebRTC при загрузке (`window.RTCPeerConnection`)
+  - 8.7. Настроить Vitest + RTL (`vitest.config.js`, jsdom, setup-файл); структура `tests/` зеркалит `src/`
+  - _Requirements: F-02, F-04, п.36, NFR-COMPAT, NFR-UX, Design: 4, 8 (нет WebRTC), 11, 12_
 
 - [ ] 9. **StartScreen компонент**
   - Экран ввода имени, создания комнаты и входа по ссылке
