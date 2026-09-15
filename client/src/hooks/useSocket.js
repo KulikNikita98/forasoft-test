@@ -20,6 +20,7 @@ const MAX_RETRIES = 3;
  */
 export function useSocket({ roomId, userName, enabled = true }) {
   const socketRef = useRef(null);
+  const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('connecting');
   const [error, setError] = useState(null);
   const [roomState, setRoomState] = useState(null);
@@ -37,6 +38,7 @@ export function useSocket({ roomId, userName, enabled = true }) {
       forceNew: true
     });
     socketRef.current = socket;
+    setSocket(socket);
     setStatus('connecting');
     setError(null);
 
@@ -75,11 +77,12 @@ export function useSocket({ roomId, userName, enabled = true }) {
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
+      setSocket(null);
     };
   }, [roomId, userName, enabled]);
 
   return {
-    socket: socketRef.current,
+    socket,
     status,
     error,
     roomState
