@@ -37,7 +37,7 @@
 
 ## Инициализация репозитория
 
-- [ ] 0. **Инициализация git-репозитория**
+- [x] 0. **Инициализация git-репозитория**
   - Завести git до написания кода, чтобы каждая задача попадала в историю отдельным коммитом/PR
   - Перед всеми остальными задачами
   - 0.1. `git init`, создать корневой `.gitignore` (`node_modules/`, `dist/`, `.env`, `certs/`, `*.pem`)
@@ -49,7 +49,7 @@
 
 ## Backend
 
-- [ ] 1. **Инициализация проекта сервера**
+- [x] 1. **Инициализация проекта сервера**
   - Настроить структуру `server/`, зависимости, базовый HTTPS + Express + Socket.io сервер
   - Архитектура **MVC + сервисный слой**: `config/` (конфигурация из .env), `models/` (модели данных), `services/` (бизнес-логика), `controllers/` (REST + WebSocket), `routes/` (Express-роуты), `infrastructure/` (логгер, SSL, rate limiter), `validation/`, `setup/` (сборка приложения)
   - 1.1. Создать `server/` со структурой (`src/config`, `src/models`, `src/services`, `src/controllers`, `src/routes`, `src/infrastructure`, `src/validation`, `src/setup`, `tests/`), инициализировать `package.json`
@@ -60,7 +60,7 @@
   - 1.6. `server.js` — только запуск: `server.listen()` + graceful shutdown (SIGTERM)
   - _Requirements: F-06, NFR-COMPAT, Design: 3, 4 (server.js), 8 (heartbeat), 12_
 
-- [ ] 2. **Модели и RoomService (models + services)**
+- [x] 2. **Модели и RoomService (models + services)**
   - Реализовать модели данных и бизнес-логику управления комнатами в памяти
   - После задачи 1
   - 2.1. `models/Participant.js` — класс `Participant` (socketId, userName, `mediaState: {audio, video}` по умолчанию true, `updateMediaState`, `toJSON`)
@@ -71,7 +71,7 @@
   - 2.6. `updateMediaState`, `addChatMessage`, `getChatHistory`
   - _Requirements: F-05, п.5, п.8, п.9, п.30, п.32, Design: 4 (models, RoomService), 5, 7_
 
-- [ ] 3. **Валидация и XSS-защита (Backend)**
+- [x] 3. **Валидация и XSS-защита (Backend)**
   - Реализовать валидацию входных данных и санитизацию для защиты от XSS
   - После задачи 1
   - 3.1. Директория `validation/` с разбивкой по доменным областям: `userName.js`, `roomId.js`, `message.js` + общий реэкспорт `index.js`. Регулярки: `userName` `/^[\p{L}\p{N} _-]{1,30}$/u`, `roomId` (UUID v4), `message` (1..1000 символов, trim)
@@ -81,7 +81,7 @@
   - 3.5. Функции `processUserName` / `processMessage` — комплексная обработка (санитизация + валидация) с единым возвращаемым контрактом `{valid, value?, error?}`
   - _Requirements: п.38, п.39, п.24, п.40, NFR-SEC, Design: 6 (validation), 10_
 
-- [ ] 4. **REST API комнат (RoomController + routes)**
+- [x] 4. **REST API комнат (RoomController + routes)**
   - HTTP-эндпоинты для управления комнатами до входа (Express)
   - После задач 2, 3
   - 4.1. `controllers/RoomController.js` — `POST /api/rooms` (создать комнату, вернуть `{roomId, createdAt}`), `GET /api/rooms/:roomId` (`{exists, participantCount, isFull}` или 404), `GET /api/rooms/:roomId/participants` (список или 404)
@@ -89,7 +89,7 @@
   - 4.3. Обработка ошибок и статус-коды (201, 400, 404, 500)
   - _Requirements: F-02, F-04, F-16, Design: 6 (REST API), 7_
 
-- [ ] 5. **WebSocket контроллер: вход/выход + чат (SocketController)**
+- [x] 5. **WebSocket контроллер: вход/выход + чат (SocketController)**
   - Клиент подключается к Socket.io ТОЛЬКО при входе в комнату; параметры входа в `handshake.query`
   - После задач 2, 3
   - 5.1. `controllers/SocketController.js` — `handleConnection`: валидация `roomId`/`userName` из query → лимит → добавление → `room-joined {participants, chatHistory}` или `error` + disconnect
@@ -100,7 +100,7 @@
   - 5.6. Обработчик `media-state`: обновление состояния, broadcast `media-state-changed`
   - _Requirements: F-01, F-04, F-12, F-13, F-14, F-16, F-17, F-18, п.24, п.28, п.29, п.35, п.40, Design: 6, 7, 8 (disconnect), 10 (rate limiting)_
 
-- [ ] 6. **WebSocket контроллер: WebRTC сигналинг**
+- [x] 6. **WebSocket контроллер: WebRTC сигналинг**
   - Ретрансляция offer/answer/ice-candidate между конкретными участниками
   - После задачи 5
   - 6.1. Обработчик `offer`: relay `{from, sdp}` → `targetSocketId`
@@ -109,7 +109,7 @@
   - 6.4. Валидация `targetSocketId`: должен быть в той же комнате, что и отправитель — иначе игнорировать и `emit error`
   - _Requirements: F-06, Design: 4, 6, 7_
 
-- [ ] 7. **Socket.io события: media-state-changed**
+- [x] 7. **Socket.io события: media-state-changed**
   - Broadcast изменения состояния микрофона/камеры участника
   - После задачи 4
   - 7.1. Обработчик `media-state-changed`: сервер только транслирует событие. `mediaState` НЕ хранится на сервере — сервер stateless по этому полю (актуальное состояние клиенты получают из broadcast)
@@ -243,7 +243,7 @@
 
 ## Тестирование
 
-- [ ] 21. **Unit-тесты Backend (модели, сервис)**
+- [x] 21. **Unit-тесты Backend (модели, сервис)**
   - Покрыть тестами серверную логику, цель 80% coverage
   - После задач 2, 3
   - 21.1. Models: `Room` (добавление/удаление участников, isFull/isEmpty, chat), `Participant` (mediaState, toJSON); `RoomService`: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
@@ -252,7 +252,7 @@
   - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит слои `src/` (например, `src/models/Room.js` → `tests/models/Room.js`, `src/services/RoomService.js` → `tests/services/RoomService.js`, `src/controllers/SocketController.js` → `tests/controllers/SocketController.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
   - _Requirements: F-05, п.8, п.9, п.24, п.38, Design: 11 (Unit tests)_
 
-- [ ] 22. **Integration-тесты (REST API + Socket.io)**
+- [x] 22. **Integration-тесты (REST API + Socket.io)**
   - Проверить сценарии событий через socket.io-client и HTTP fetch
   - После задач 4, 5, 6, 7
   - 22.1. REST API (`RoomController`): создание комнаты, получение информации, список участников, 404
@@ -284,7 +284,7 @@
 
 ## DevOps / Инфраструктура
 
-- [ ] 25. **HTTPS dev окружение**
+- [x] 25. **HTTPS dev окружение**
   - Настроить локальные сертификаты для HTTPS (обязателен для getUserMedia)
   - После задачи 1
   - 25.1. Генерация сертификатов через mkcert (`localhost`, `127.0.0.1`)
