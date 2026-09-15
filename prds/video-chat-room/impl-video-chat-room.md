@@ -43,26 +43,26 @@
 ## Backend
 
 - [ ] 1. **Инициализация проекта сервера**
-  - Настроить структуру `server/`, зависимости, базовый HTTPS + Socket.io сервер
-  - Слоистая архитектура: `config/` (конфигурация из .env), `domain/` (бизнес-логика), `infrastructure/` (Socket.io-обработчики, логгер, SSL), `validation/`, `setup/` (сборка приложения)
-  - 1.1. Создать `server/` со структурой (`src/config`, `src/domain`, `src/infrastructure`, `src/validation`, `src/setup`, `tests/`), инициализировать `package.json`
+  - Настроить структуру `server/`, зависимости, базовый HTTPS + Express + Socket.io сервер
+  - Архитектура **MVC + сервисный слой**: `config/` (конфигурация из .env), `models/` (модели данных), `services/` (бизнес-логика), `controllers/` (REST + WebSocket), `routes/` (Express-роуты), `infrastructure/` (логгер, SSL, rate limiter), `validation/`, `setup/` (сборка приложения)
+  - 1.1. Создать `server/` со структурой (`src/config`, `src/models`, `src/services`, `src/controllers`, `src/routes`, `src/infrastructure`, `src/validation`, `src/setup`, `tests/`), инициализировать `package.json`
   - 1.2. Установить зависимости: `express`, `socket.io`, `dotenv`, `winston`
-  - 1.3. `config/index.js` — чтение из `.env`: PORT, CORS_ORIGIN, SSL_CERT_PATH/SSL_KEY_PATH, LOG_LEVEL, Socket.io опции (`pingTimeout: 20000`, `pingInterval: 25000`). Зависит от задачи 25 (сначала сертификаты)
+  - 1.3. `config/index.js` — единый объект `config` из `.env`: port, corsOrigin, ssl (certPath/keyPath), logLevel, socketIO (`pingTimeout: 20000`, `pingInterval: 25000`). Зависит от задачи 25 (сначала сертификаты)
   - 1.4. `infrastructure/ssl.js` (загрузка сертификатов по путям из .env), `infrastructure/logger.js` (winston, уровень из .env)
-  - 1.5. `setup/app.js` — единая точка сборки (`createApp()`): Express + health-check `GET /health`, HTTPS-сервер, Socket.io, подключение обработчиков
+  - 1.5. `setup/app.js` — единая точка сборки (`createApp()`): Express + health-check `GET /health`, REST-роуты, HTTPS-сервер, Socket.io, подключение контроллеров
   - 1.6. `server.js` — только запуск: `server.listen()` + graceful shutdown (SIGTERM)
   - _Requirements: F-06, NFR-COMPAT, Design: 3, 4 (server.js), 8 (heartbeat), 12_
 
-- [ ] 2. **RoomManager модуль (domain-слой)**
-  - Реализовать управление комнатами и участниками в памяти
+- [ ] 2. **Модели и RoomService (models + services)**
+  - Реализовать модели данных и бизнес-логику управления комнатами в памяти
   - После задачи 1
-  - 2.1. Класс `RoomManager` (`src/domain/RoomManager.js`) со структурами `rooms: Map<roomId, Room>`
-  - 2.2. `createRoom(roomId)` — создание комнаты при первом участнике
-  - 2.3. `joinRoom(roomId, socketId, userName)` — атомарная проверка лимита `< 4`, возврат `{success, participants, chatHistory, error}`; участник получает `mediaState: {audio, video}` (по умолчанию true)
-  - 2.4. `leaveRoom(socketId)` — удаление участника, определение `shouldDeleteRoom` (последний вышел)
-  - 2.5. Удаление комнаты и истории при выходе последнего участника
-  - 2.6. `addChatMessage` / `getChatHistory` — работа с историей сообщений
-  - _Requirements: F-05, п.5, п.8, п.9, п.30, п.32, Design: 4 (RoomManager), 5, 7_
+  - 2.1. `models/Participant.js` — класс `Participant` (socketId, userName, `mediaState: {audio, video}` по умолчанию true, `updateMediaState`, `toJSON`)
+  - 2.2. `models/Room.js` — класс `Room` (participants `Map`, chatHistory, `addParticipant`, `removeParticipant`, `isFull` (лимит 4), `isEmpty`, `addChatMessage`, `toJSON`)
+  - 2.3. `services/RoomService.js` — `rooms: Map<roomId, Room>`; `createRoom`, `getOrCreateRoom`, `deleteRoom`, `roomExists`
+  - 2.4. `addParticipant(roomId, socketId, userName)` — атомарная проверка лимита `< 4`, возврат `{success, room, participant, error}`
+  - 2.5. `removeParticipant(roomId, socketId)` — удаление участника, `shouldDeleteRoom` (последний вышел), удаление комнаты
+  - 2.6. `updateMediaState`, `addChatMessage`, `getChatHistory`
+  - _Requirements: F-05, п.5, п.8, п.9, п.30, п.32, Design: 4 (models, RoomService), 5, 7_
 
 - [ ] 3. **Валидация и XSS-защита (Backend)**
   - Реализовать валидацию входных данных и санитизацию для защиты от XSS
@@ -74,29 +74,30 @@
   - 3.5. Функции `processUserName` / `processMessage` — комплексная обработка (санитизация + валидация) с единым возвращаемым контрактом `{valid, value?, error?}`
   - _Requirements: п.38, п.39, п.24, п.40, NFR-SEC, Design: 6 (validation), 10_
 
-- [ ] 4. **Socket.io события: вход и выход**
-  - Обработчики join-room (с acknowledgement), leave-room, disconnecting
+- [ ] 4. **REST API комнат (RoomController + routes)**
+  - HTTP-эндпоинты для управления комнатами до входа (Express)
   - После задач 2, 3
-  - 4.1. `SignalingHandler` (`src/infrastructure/SignalingHandler.js`) — регистрация обработчиков Socket.io
-  - 4.2. `join-room` с acknowledgement callback: валидация → лимит → добавление → ack `{success, participants, chatHistory}` или `{success: false, error}`
-  - 4.3. Broadcast `user-joined` остальным участникам комнаты
-  - 4.4. Обработчик `leave-room` и `disconnecting` (НЕ `disconnect` — roomId ещё доступен), broadcast `user-left`
-  - 4.5. Системные сообщения о входе/выходе в чат (`type: 'system'`); сообщение о входе добавляется в историю ПОСЛЕ отправки ack (вошедший не видит сообщение о собственном входе)
-  - _Requirements: F-01, F-04, F-16, F-17, F-18, п.28, п.29, п.35, Design: 4, 6 (ack), 7, 8 (disconnecting)_
+  - 4.1. `controllers/RoomController.js` — `POST /api/rooms` (создать комнату, вернуть `{roomId, createdAt}`), `GET /api/rooms/:roomId` (`{exists, participantCount, isFull}` или 404), `GET /api/rooms/:roomId/participants` (список или 404)
+  - 4.2. `routes/api.js` — Express Router, подключение к `/api` в `setup/app.js`
+  - 4.3. Обработка ошибок и статус-коды (201, 400, 404, 500)
+  - _Requirements: F-02, F-04, F-16, Design: 6 (REST API), 7_
 
-- [ ] 5. **Socket.io события: текстовый чат**
-  - Прием, валидация, сохранение и broadcast сообщений чата
-  - После задачи 4
-  - 5.1. Обработчик `chat-message`: валидация, санитизация, добавление в историю
-  - 5.2. Broadcast `chat-message` `{from, fromName, message, timestamp}` всем в комнате
-  - 5.3. Rate limiting: 5 сообщений/сек на socketId (server-side); при превышении — молча отбрасывать сообщение + `emit error {type: 'rate-limit'}` отправителю
-  - _Requirements: F-12, F-13, F-14, п.24, п.40, Design: 6, 7, 10 (rate limiting)_
+- [ ] 5. **WebSocket контроллер: вход/выход + чат (SocketController)**
+  - Клиент подключается к Socket.io ТОЛЬКО при входе в комнату; параметры входа в `handshake.query`
+  - После задач 2, 3
+  - 5.1. `controllers/SocketController.js` — `handleConnection`: валидация `roomId`/`userName` из query → лимит → добавление → `room-joined {participants, chatHistory}` или `error` + disconnect
+  - 5.2. Broadcast `user-joined` остальным; системные сообщения о входе/выходе (`type: 'system'`)
+  - 5.3. `handleDisconnect` — удаление участника, broadcast `user-left`, удаление комнаты при выходе последнего
+  - 5.4. Обработчик `chat-message`: валидация, санитизация, добавление в историю, broadcast `{from, fromName, message, timestamp}` всем
+  - 5.5. Rate limiting (`infrastructure/RateLimiter.js`): 5 сообщений/сек на socketId; при превышении — `emit error {type: 'rate-limit'}` отправителю
+  - 5.6. Обработчик `media-state`: обновление состояния, broadcast `media-state-changed`
+  - _Requirements: F-01, F-04, F-12, F-13, F-14, F-16, F-17, F-18, п.24, п.28, п.29, п.35, п.40, Design: 6, 7, 8 (disconnect), 10 (rate limiting)_
 
-- [ ] 6. **Socket.io события: WebRTC сигналинг**
+- [ ] 6. **WebSocket контроллер: WebRTC сигналинг**
   - Ретрансляция offer/answer/ice-candidate между конкретными участниками
-  - После задачи 4
-  - 6.1. Обработчик `offer`: relay `{fromSocketId, sdp}` → `targetSocketId`
-  - 6.2. Обработчик `answer`: relay `{fromSocketId, sdp}` → `targetSocketId`
+  - После задачи 5
+  - 6.1. Обработчик `offer`: relay `{from, sdp}` → `targetSocketId`
+  - 6.2. Обработчик `answer`: relay `{from, sdp}` → `targetSocketId`
   - 6.3. Обработчик `ice-candidate`: relay `{fromSocketId, candidate}` → `targetSocketId`
   - 6.4. Валидация `targetSocketId`: должен быть в той же комнате, что и отправитель — иначе игнорировать и `emit error`
   - _Requirements: F-06, Design: 4, 6, 7_
@@ -132,9 +133,9 @@
 - [ ] 10. **Socket.io клиент и хук useSocket**
   - Подключение к серверу, обработка ошибок соединения
   - После задачи 8
-  - 10.1. `useSocket` хук: инициализация socket.io-client, подключение
+  - 10.1. `useSocket` хук: инициализация socket.io-client, подключение к комнате с параметрами `{roomId, userName}` в query (подключение происходит только при входе в комнату)
   - 10.2. Обработка `connect_error` → сообщение «Сервер недоступен» (retry 3 раза)
-  - 10.3. Утилита emit с acknowledgement для join-room
+  - 10.3. Обработка события `room-joined` (участники, история чата) и `error` (validation/room-full)
   - _Requirements: п.35, Design: 4, 6, 8 (недоступность сервера)_
 
 - [ ] 11. **RoomScreen layout**
@@ -142,7 +143,7 @@
   - После задач 9, 10
   - 11.1. Layout: видеосетка + панель управления + чат/список участников
   - 11.2. Запрос имени, если открыт `/room/:roomId` напрямую (без имени)
-  - 11.3. Вызов join-room, обработка ответа (участники, история)
+  - 11.3. Подключение к WebSocket с `{roomId, userName}`, обработка `room-joined` (участники, история)
   - 11.4. Кнопка копирования ссылки-приглашения в буфер обмена + подтверждение
   - 11.5. Состояние участников (список, обновление в реальном времени)
   - _Requirements: F-03, F-04, F-16, п.5, п.6, NFR-UX, Design: 4 (RoomScreen), 7_
@@ -235,23 +236,23 @@
 
 ## Тестирование
 
-- [ ] 21. **Unit-тесты Backend (RoomManager, валидация)**
+- [ ] 21. **Unit-тесты Backend (модели, сервис)**
   - Покрыть тестами серверную логику, цель 80% coverage
   - После задач 2, 3
-  - 21.1. RoomManager: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
-  - 21.2. Валидация покрывается косвенно через integration/интеграционные проверки обработчиков; отдельные unit-тесты модуля `validation/` не пишем (решение по итогам ревью)
+  - 21.1. Models: `Room` (добавление/удаление участников, isFull/isEmpty, chat), `Participant` (mediaState, toJSON); `RoomService`: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
+  - 21.2. Валидация покрывается косвенно через integration-тесты контроллеров; отдельные unit-тесты модуля `validation/` не пишем (решение по итогам ревью)
   - 21.3. Настроить Vitest (нативная поддержка ESM), скрипт `npm test`, coverage report. Альтернатива: Jest с `--experimental-vm-modules` для ESM
-  - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит слои `src/` (например, `src/domain/RoomManager.js` → `tests/domain/RoomManager.js`, `src/infrastructure/SignalingHandler.js` → `tests/infrastructure/SignalingHandler.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
+  - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит слои `src/` (например, `src/models/Room.js` → `tests/models/Room.js`, `src/services/RoomService.js` → `tests/services/RoomService.js`, `src/controllers/SocketController.js` → `tests/controllers/SocketController.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
   - _Requirements: F-05, п.8, п.9, п.24, п.38, Design: 11 (Unit tests)_
 
-- [ ] 22. **Integration-тесты Socket.io**
-  - Проверить сценарии событий через socket.io-client
+- [ ] 22. **Integration-тесты (REST API + Socket.io)**
+  - Проверить сценарии событий через socket.io-client и HTTP fetch
   - После задач 4, 5, 6, 7
-  - 22.1. Создание комнаты + вход 4 участников
-  - 22.2. Отклонение 5-го участника (error `room-full`)
-  - 22.3. Обмен сообщениями в чате, broadcast user-joined/user-left
+  - 22.1. REST API (`RoomController`): создание комнаты, получение информации, список участников, 404
+  - 22.2. WebSocket: вход 4 участников, отклонение 5-го (error `room-full`)
+  - 22.3. Обмен сообщениями в чате, broadcast user-joined/user-left, media-state-changed
   - 22.4. Relay WebRTC signaling, выход последнего → удаление комнаты
-  - 22.5. Проверка обработки `disconnecting`
+  - 22.5. Проверка обработки `disconnect` (broadcast user-left, удаление комнаты)
   - _Requirements: F-05, F-12, F-16, F-17, F-18, п.9, Design: 11 (Integration tests)_
 
 - [ ] 23. **E2E тесты (Playwright)**

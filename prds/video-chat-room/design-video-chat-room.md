@@ -313,99 +313,146 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
 
 ## 6. API / Contracts
 
-### Socket.io Event Schemas
+### Архитектура: MVC + REST + WebSocket
 
-#### `join-room` (Client → Server)
+Приложение использует паттерн **MVC** с сервисным слоем:
+- **Models** (`Room`, `Participant`) — структуры данных
+- **Services** (`RoomService`) — бизнес-логика, общая для HTTP и WebSocket
+- **Controllers** (`RoomController` — REST, `SocketController` — WebSocket)
+
+**Разделение HTTP и WebSocket:**
+- **REST API** (Express) — управление комнатами до входа: создание, проверка существования, список участников
+- **WebSocket** (Socket.io) — клиент подключается ТОЛЬКО при входе в комнату; параметры входа (`roomId`, `userName`) передаются в `handshake.query`. Real-time: чат, WebRTC-сигналинг, состояние медиа
+
+---
+
+### REST API (Express)
+
+#### `POST /api/rooms` — создать комнату
 
 **Request:**
-```javascript
-socket.emit('join-room', {
-  roomId: string,    // UUID v4 format
-  userName: string   // 1..30 символов
-}, (response) => {
-  // acknowledgement callback
-})
+```json
+{ "userName": "Alice" }
 ```
 
-**Response (acknowledgement):**
-```javascript
-// Success
+**Response `201`:**
+```json
+{ "roomId": "3usl6d", "createdAt": 1789507694392 }
+```
+
+**Response `400`:** `{ "error": "userName is required" }`
+
+#### `GET /api/rooms/:roomId` — информация о комнате
+
+**Response `200`:**
+```json
+{ "exists": true, "participantCount": 2, "isFull": false }
+```
+
+**Response `404`:** `{ "error": "Room not found" }`
+
+#### `GET /api/rooms/:roomId/participants` — список участников
+
+**Response `200`:**
+```json
 {
-  success: true,
-  participants: [
-    {socketId: string, userName: string, mediaState: {audio: boolean, video: boolean}},
-    ...
-  ],
-  chatHistory: [
-    {from: string, fromName: string, message: string, timestamp: number, type: string},
-    ...
+  "participants": [
+    { "socketId": "abc", "userName": "Alice", "mediaState": { "audio": true, "video": true } }
   ]
 }
+```
 
-// Error
+**Response `404`:** `{ "error": "Room not found" }`
+
+#### `GET /health` — статус сервера
+
+**Response `200`:** `{ "status": "ok", "timestamp": "2026-09-15T21:28:14.448Z" }`
+
+---
+
+### Socket.io Event Schemas
+
+#### Подключение к комнате (handshake)
+
+Клиент подключается к Socket.io с параметрами входа в query. Сервер валидирует их в `handleConnection`, добавляет участника (атомарная проверка лимита 4) и присоединяет к комнате.
+
+```javascript
+const socket = io('https://localhost:3000', {
+  query: { roomId: '<uuid v4>', userName: 'Alice' }
+})
+```
+
+**Server → Client `room-joined`** (успешный вход):
+```javascript
 {
-  success: false,
-  error: 'room-full' | 'invalid-name' | 'server-error'
+  participants: [   // существующие участники (без себя)
+    { socketId: string, userName: string, mediaState: { audio: boolean, video: boolean } }
+  ],
+  chatHistory: [
+    { id, from, fromName, message, timestamp, type: 'user' | 'system', text? }
+  ]
 }
 ```
 
-#### `chat-message` (Client → Server)
-
-**Request:**
+**Server → Client `error`** (отказ, после чего сокет отключается):
 ```javascript
-socket.emit('chat-message', {
-  roomId: string,
-  message: string    // 1..1000 символов, trimmed
-})
+{ type: 'validation' | 'room-full', message: string }
 ```
 
-**Broadcast (Server → Room):**
+**Server → Room `user-joined`** (новый участник):
 ```javascript
-socket.to(roomId).emit('chat-message', {
-  from: string,           // socketId
-  fromName: string,       // userName
-  message: string,
-  timestamp: number
-})
+{ socketId: string, userName: string, mediaState: { audio: boolean, video: boolean } }
 ```
 
-#### `offer` (Client → Server → Client)
+**Server → Room `user-left`** (участник вышел / отключился):
+```javascript
+{ socketId: string, userName: string }
+```
+
+**Server → Room `system-message`** (вход/выход):
+```javascript
+{ id: string, type: 'system', text: string, timestamp: number }
+```
+
+#### `chat-message`
 
 **Client → Server:**
 ```javascript
-socket.emit('offer', {
-  roomId: string,
-  targetSocketId: string,
-  sdp: RTCSessionDescriptionInit
-})
+socket.emit('chat-message', { message: string })  // roomId известен из сессии
 ```
 
-**Server → Target:**
+**Server → Room (broadcast, включая отправителя):**
 ```javascript
-socket.to(targetSocketId).emit('offer', {
-  fromSocketId: string,
-  sdp: RTCSessionDescriptionInit
-})
+{ from: string, fromName: string, message: string, timestamp: number }
 ```
 
-#### `media-state-changed` (Client → Server → Room)
+Rate limiting: 5 сообщений/сек на socketId; при превышении отправителю приходит `error { type: 'rate-limit' }`.
+
+#### `media-state`
 
 **Client → Server:**
 ```javascript
-socket.emit('media-state-changed', {
-  roomId: string,
-  kind: 'video' | 'audio',
-  enabled: boolean
-})
+socket.emit('media-state', { audio: boolean, video: boolean })
 ```
 
-**Server → Room:**
+**Server → Room `media-state-changed`:**
 ```javascript
-socket.to(roomId).emit('media-state-changed', {
-  socketId: string,
-  kind: 'video' | 'audio',
-  enabled: boolean
-})
+{ socketId: string, mediaState: { audio: boolean, video: boolean } }
+```
+
+#### WebRTC signaling: `offer` / `answer` / `ice-candidate`
+
+**Client → Server:**
+```javascript
+socket.emit('offer', { targetSocketId: string, sdp: RTCSessionDescriptionInit })
+socket.emit('answer', { targetSocketId: string, sdp: RTCSessionDescriptionInit })
+socket.emit('ice-candidate', { targetSocketId: string, candidate: RTCIceCandidateInit })
+```
+
+**Server → Target (unicast):**
+```javascript
+{ from: string, sdp }          // для offer/answer
+{ from: string, candidate }    // для ice-candidate
 ```
 
 ### Validation Rules
@@ -1028,16 +1075,20 @@ video-chat-room/
 │   │   └── main.jsx
 │   ├── package.json
 │   └── vite.config.js
-├── server/                    # Node.js backend (layered architecture)
+├── server/                    # Node.js backend (MVC + service layer)
 │   ├── src/
-│   │   ├── config/            # Configuration layer (reads from .env)
-│   │   │   └── index.js       # PORT, CORS, SSL paths, LOG_LEVEL, Socket.io opts
-│   │   ├── domain/           # Business logic layer
-│   │   │   └── RoomManager.js
-│   │   ├── infrastructure/   # Infrastructure layer
-│   │   │   ├── SignalingHandler.js
-│   │   │   ├── logger.js
-│   │   │   └── ssl.js
+│   │   ├── config/            # Configuration (reads from .env)
+│   │   │   └── index.js       # single config object: port, ssl, logLevel, socketIO
+│   │   ├── models/           # Data models (M in MVC)
+│   │   │   ├── Room.js        # Room: participants, chat history, limits
+│   │   │   └── Participant.js # Participant: socketId, userName, mediaState
+│   │   ├── services/         # Business logic layer
+│   │   │   └── RoomService.js # room lifecycle, participants, chat, media state
+│   │   ├── controllers/      # Controllers (C in MVC)
+│   │   │   ├── RoomController.js   # REST API handlers (HTTP)
+│   │   │   └── SocketController.js # WebSocket handlers (real-time)
+│   │   ├── routes/           # Express routing
+│   │   │   └── api.js         # REST API routes (/api/rooms)
 │   │   ├── validation/       # Validation & XSS protection
 │   │   │   ├── constants.js
 │   │   │   ├── messages.js    # localized error messages (ru)
@@ -1045,14 +1096,22 @@ video-chat-room/
 │   │   │   ├── roomId.js
 │   │   │   ├── message.js
 │   │   │   └── index.js
+│   │   ├── infrastructure/   # Infrastructure layer
+│   │   │   ├── RateLimiter.js # chat rate limiting (5 msg/sec)
+│   │   │   ├── logger.js      # winston logger
+│   │   │   └── ssl.js         # SSL certificate loader
 │   │   ├── setup/            # App composition root
-│   │   │   └── app.js         # createApp(): wires all layers together
+│   │   │   └── app.js         # createApp(): wires MVC + Socket.io together
 │   │   └── server.js         # Entry point: only listen() + graceful shutdown
 │   ├── tests/                # Test structure mirrors src/ layers
-│   │   ├── domain/
-│   │   │   └── RoomManager.js
-│   │   └── infrastructure/
-│   │       └── SignalingHandler.js
+│   │   ├── models/
+│   │   │   ├── Room.js
+│   │   │   └── Participant.js
+│   │   ├── services/
+│   │   │   └── RoomService.js
+│   │   └── controllers/
+│   │       ├── RoomController.js   # REST API integration tests
+│   │       └── SocketController.js # WebSocket integration tests
 │   ├── certs/                # mkcert SSL certificates (gitignored)
 │   ├── vitest.config.js
 │   ├── package.json
