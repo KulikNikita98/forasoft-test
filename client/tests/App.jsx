@@ -6,6 +6,14 @@ vi.mock('../src/utils/webrtcSupport.js', () => ({
   isWebRTCSupported: vi.fn()
 }));
 
+// Мокаем экраны — App-тест проверяет только роутинг, не их содержимое
+vi.mock('../src/components/StartScreen.jsx', () => ({
+  default: () => <div>StartScreen stub</div>
+}));
+vi.mock('../src/components/RoomScreen.jsx', () => ({
+  default: () => <div>RoomScreen stub</div>
+}));
+
 import { isWebRTCSupported } from '../src/utils/webrtcSupport.js';
 import App from '../src/App.jsx';
 
@@ -25,14 +33,13 @@ describe('App routing', () => {
     isWebRTCSupported.mockReturnValue(true);
     window.history.pushState({}, '', '/');
     render(<App />);
-    expect(screen.getByText('Видеочат-комната')).toBeInTheDocument();
+    expect(screen.getByText('StartScreen stub')).toBeInTheDocument();
   });
 
   it('renders RoomScreen on /room/:roomId', () => {
     isWebRTCSupported.mockReturnValue(true);
     window.history.pushState({}, '', '/room/abc-123');
     render(<App />);
-    expect(screen.getByText(/Комната:/)).toBeInTheDocument();
-    expect(screen.getByText(/abc-123/)).toBeInTheDocument();
+    expect(screen.getByText('RoomScreen stub')).toBeInTheDocument();
   });
 });
