@@ -47,14 +47,23 @@ mkcert localhost 127.0.0.1 ::1
 
 ### 3. Конфигурация окружения
 
-```bash
-# server/.env (опционально, есть дефолты)
-cp server/.env.example server/.env
+Оба `.env` опциональны — у клиента и сервера есть рабочие дефолты.
 
+```bash
+# server/.env
+cp server/.env.example server/.env
 # Основные параметры:
 # PORT=3000
 # NODE_ENV=development
 # CORS_ORIGIN=https://localhost:5173
+# SSL_CERT_PATH / SSL_KEY_PATH — пути к mkcert-сертификатам
+
+# client/.env
+cp client/.env.example client/.env
+# Основные параметры:
+# VITE_API_BASE_URL=https://localhost:3000
+# VITE_WS_URL=https://localhost:3000
+# VITE_STUN_SERVERS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
 ```
 
 ### 4. Запуск в dev-режиме

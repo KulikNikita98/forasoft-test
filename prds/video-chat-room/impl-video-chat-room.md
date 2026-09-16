@@ -289,7 +289,7 @@
   - Настроить локальные сертификаты для HTTPS (обязателен для getUserMedia)
   - После задачи 1
   - 25.1. Генерация сертификатов через mkcert (`localhost`, `127.0.0.1`)
-  - 25.2. Подключение сертификатов в server.js и vite.config.js
+  - 25.2. Подключение сертификатов в `setup/app.js` (через `infrastructure/ssl.js`) и `vite.config.js`
   - 25.3. Документировать setup в README
   - _Requirements: NFR-SEC, NFR-COMPAT, Design: 10 (HTTPS), 12_
 
