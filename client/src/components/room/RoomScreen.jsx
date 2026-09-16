@@ -8,10 +8,11 @@ import InviteButton from './InviteButton.jsx';
 import { ParticipantList } from '../participant/index.js';
 import { VideoGrid } from '../video/index.js';
 import { Controls } from '../controls/index.js';
+import { Chat } from '../chat/index.js';
 
 /**
- * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты.
- * Видеосетка (задача 12), чат (задача 16), панель управления (задача 15).
+ * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты:
+ * видеосетку, чат, список участников и панель управления.
  */
 function RoomScreen() {
   const { roomId } = useParams();
@@ -27,11 +28,13 @@ function RoomScreen() {
     enabled: Boolean(userName)
   });
 
-  // Локальные медиа-устройства (задача 13)
   const { localStream, isAudioEnabled, isVideoEnabled, startMedia, toggleAudio, toggleVideo } = useMedia();
 
   // Список участников в реальном времени
   const [participants, setParticipants] = useState([]);
+
+  // Сообщения чата (user + system)
+  const [messages, setMessages] = useState([]);
 
   // Запуск локального потока при успешном подключении
   useEffect(() => {
@@ -40,10 +43,11 @@ function RoomScreen() {
     }
   }, [status]);
 
-  // Инициализация списка из room-joined
+  // Инициализация списка участников и истории чата из room-joined
   useEffect(() => {
     if (roomState) {
       setParticipants(roomState.participants);
+      setMessages(roomState.chatHistory);
     }
   }, [roomState]);
 
@@ -67,7 +71,32 @@ function RoomScreen() {
     };
   }, [socket]);
 
-  // Обработчики Controls
+  // Приём сообщений чата и системных событий
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const onChatMessage = (msg) => {
+      setMessages((prev) => [...prev, { ...msg, type: 'user' }]);
+    };
+    const onSystemMessage = (msg) => {
+      setMessages((prev) => [...prev, { ...msg, type: 'system' }]);
+    };
+
+    socket.on('chat-message', onChatMessage);
+    socket.on('system-message', onSystemMessage);
+
+    return () => {
+      socket.off('chat-message', onChatMessage);
+      socket.off('system-message', onSystemMessage);
+    };
+  }, [socket]);
+
+  const handleSendMessage = (text) => {
+    if (socket) {
+      socket.emit('chat-message', { message: text });
+    }
+  };
+
   const handleToggleMic = () => {
     toggleAudio();
     if (socket) {
@@ -102,14 +131,12 @@ function RoomScreen() {
 
   return (
     <div className="flex h-screen flex-col bg-gray-900 text-white">
-      {/* Заголовок с приглашением */}
       <header className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
         <h1 className="text-lg font-semibold">Комната</h1>
         <InviteButton />
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Основная область: видеосетка (задача 12) */}
         <main className="flex flex-1 items-center justify-center p-4">
           {status === 'connecting' ? (
             <div className="text-gray-500">Подключение...</div>
@@ -124,16 +151,18 @@ function RoomScreen() {
           )}
         </main>
 
-        {/* Боковая панель: участники + чат (задача 16) */}
         <aside className="flex w-72 flex-col gap-4 border-l border-gray-800 p-4">
           <ParticipantList participants={participants} currentUserName={userName} />
-          <div className="flex-1 text-sm text-gray-500">
-            Чат (в разработке — задача 16)
+          <div className="min-h-0 flex-1">
+            <Chat
+              messages={messages}
+              onSend={handleSendMessage}
+              currentSocketId={socket?.id}
+            />
           </div>
         </aside>
       </div>
 
-      {/* Панель управления (задача 15) */}
       <footer className="border-t border-gray-800 px-4 py-3">
         <Controls
           isMicEnabled={isAudioEnabled}
