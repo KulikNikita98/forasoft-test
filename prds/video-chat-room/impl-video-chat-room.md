@@ -222,7 +222,7 @@
 
 ## Интеграция WebRTC
 
-- [ ] 18. **WebRTC handshake flow (координация)**
+- [x] 18. **WebRTC handshake flow (координация)**
   - Связать сигналинг сервера с useWebRTC по правилу против glare
   - После задач 6, 14
   - 18.1. При входе новый участник создаёт offer для КАЖДОГО существующего (initiator)
@@ -300,7 +300,7 @@
   - 25.3. Документировать setup в README
   - _Requirements: NFR-SEC, NFR-COMPAT, Design: 10 (HTTPS), 12_
 
-- [ ] 26. **Environment variables**
+- [x] 26. **Environment variables**
   - Вынести конфигурацию в .env файлы
   - После задач 1, 8
   - 26.1. Server `.env`: PORT, NODE_ENV, SSL пути, PING_TIMEOUT/INTERVAL, LOG_LEVEL
@@ -308,7 +308,7 @@
   - 26.3. Создать `.env.example` для обоих + добавить в .gitignore
   - _Requirements: NFR-SEC, Design: 12 (env vars)_
 
-- [ ] 27. **Production build**
+- [x] 27. **Production build**
   - Настроить сборку и деплой (обязательно: рабочий запуск по README — требование задания)
   - После задач 1, 8, 26
   - 27.1. `npm run build` в client → статика в `client/dist`
@@ -320,7 +320,7 @@
 
 ## Документация
 
-- [ ] 28. **README с инструкциями запуска**
+- [x] 28. **README с инструкциями запуска**
   - Написать полную инструкцию установки и запуска
   - После задач 25, 26
   - 28.1. Установка зависимостей (client/server)
