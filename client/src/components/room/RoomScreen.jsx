@@ -5,6 +5,8 @@ import { useMedia } from '../../hooks/useMedia.js';
 import NamePrompt from './NamePrompt.jsx';
 import RoomError from './RoomError.jsx';
 import InviteButton from './InviteButton.jsx';
+import MediaErrorBanner from './MediaErrorBanner.jsx';
+import AudioUnlockOverlay from './AudioUnlockOverlay.jsx';
 import { ParticipantList } from '../participant/index.js';
 import { VideoGrid } from '../video/index.js';
 import { Controls } from '../controls/index.js';
@@ -28,13 +30,27 @@ function RoomScreen() {
     enabled: Boolean(userName)
   });
 
-  const { localStream, isAudioEnabled, isVideoEnabled, startMedia, toggleAudio, toggleVideo } = useMedia();
+  const {
+    localStream,
+    isAudioEnabled,
+    isVideoEnabled,
+    error: mediaError,
+    startMedia,
+    toggleAudio,
+    toggleVideo
+  } = useMedia();
 
   // Список участников в реальном времени
   const [participants, setParticipants] = useState([]);
 
   // Сообщения чата (user + system)
   const [messages, setMessages] = useState([]);
+
+  // Показ баннера ошибки медиа (можно закрыть)
+  const [mediaErrorDismissed, setMediaErrorDismissed] = useState(false);
+
+  // Разблокировка remote audio (autoplay policy). Показываем оверлей, пока есть удалённые участники.
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   // Запуск локального потока при успешном подключении
   useEffect(() => {
@@ -119,6 +135,10 @@ function RoomScreen() {
     navigate('/');
   };
 
+  const handleUnlockAudio = () => {
+    setAudioUnlocked(true);
+  };
+
   // Прямой вход по ссылке без имени — запросить имя
   if (!userName) {
     return <NamePrompt onSubmit={setUserName} />;
@@ -136,8 +156,15 @@ function RoomScreen() {
         <InviteButton />
       </header>
 
+      {mediaError && !mediaErrorDismissed && (
+        <MediaErrorBanner
+          message={mediaError}
+          onDismiss={() => setMediaErrorDismissed(true)}
+        />
+      )}
+
       <div className="flex flex-1 overflow-hidden">
-        <main className="flex flex-1 items-center justify-center p-4">
+        <main className="relative flex flex-1 items-center justify-center p-4">
           {status === 'connecting' ? (
             <div className="text-gray-500">Подключение...</div>
           ) : (
@@ -148,6 +175,10 @@ function RoomScreen() {
               isLocalMuted={!isAudioEnabled}
               isLocalVideoOff={!isVideoEnabled}
             />
+          )}
+
+          {status === 'connected' && participants.length > 0 && !audioUnlocked && (
+            <AudioUnlockOverlay onUnlock={handleUnlockAudio} />
           )}
         </main>
 
