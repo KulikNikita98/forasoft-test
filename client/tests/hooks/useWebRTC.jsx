@@ -38,10 +38,12 @@ describe('useWebRTC', () => {
       addIceCandidate: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       connectionState: 'connected',
+      iceConnectionState: 'connected',
       remoteDescription: null,
       ontrack: null,
       onicecandidate: null,
-      onconnectionstatechange: null
+      onconnectionstatechange: null,
+      oniceconnectionstatechange: null
     };
 
     global.RTCPeerConnection = vi.fn(function() {
@@ -378,5 +380,118 @@ describe('useWebRTC', () => {
     });
 
     expect(mockPeerConnection.addIceCandidate).not.toHaveBeenCalled();
+  });
+
+  it('вызывает onConnectionStateChange при смене ICE-состояния', async () => {
+    const onConnectionStateChange = vi.fn();
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft,
+        onConnectionStateChange
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+    });
+
+    act(() => {
+      mockPeerConnection.iceConnectionState = 'connected';
+      mockPeerConnection.oniceconnectionstatechange();
+    });
+
+    expect(onConnectionStateChange).toHaveBeenCalledWith('peer-1', 'connected');
+  });
+
+  it('закрывает соединение сразу при iceConnectionState=failed', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+    });
+
+    act(() => {
+      mockPeerConnection.iceConnectionState = 'failed';
+      mockPeerConnection.oniceconnectionstatechange();
+    });
+
+    expect(mockPeerConnection.close).toHaveBeenCalled();
+    expect(onPeerLeft).toHaveBeenCalledWith('peer-1');
+  });
+
+  it('ждёт 5 сек перед закрытием при iceConnectionState=disconnected', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+    });
+
+    act(() => {
+      mockPeerConnection.iceConnectionState = 'disconnected';
+      mockPeerConnection.oniceconnectionstatechange();
+    });
+
+    // Сразу не закрывается
+    expect(mockPeerConnection.close).not.toHaveBeenCalled();
+
+    // Спустя 5 сек — закрывается (состояние осталось disconnected)
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(mockPeerConnection.close).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('отменяет закрытие если соединение восстановилось после disconnected', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+    });
+
+    act(() => {
+      mockPeerConnection.iceConnectionState = 'disconnected';
+      mockPeerConnection.oniceconnectionstatechange();
+    });
+
+    // Восстановление до истечения таймера
+    act(() => {
+      mockPeerConnection.iceConnectionState = 'connected';
+      mockPeerConnection.oniceconnectionstatechange();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(mockPeerConnection.close).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

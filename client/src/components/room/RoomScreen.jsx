@@ -8,6 +8,7 @@ import RoomError from './RoomError.jsx';
 import InviteButton from './InviteButton.jsx';
 import MediaErrorBanner from './MediaErrorBanner.jsx';
 import AudioUnlockOverlay from './AudioUnlockOverlay.jsx';
+import ConnectionStatusBanner from './ConnectionStatusBanner.jsx';
 import { ParticipantList } from '../participant/index.js';
 import { VideoGrid } from '../video/index.js';
 import { Controls } from '../controls/index.js';
@@ -56,6 +57,9 @@ function RoomScreen() {
   // Удалённые потоки: Map<socketId, MediaStream>
   const [remoteStreams, setRemoteStreams] = useState(new Map());
 
+  // Проблема с P2P-соединением ('disconnected' | 'failed' | null)
+  const [connectionIssue, setConnectionIssue] = useState(null);
+
   // WebRTC: создание P2P соединений с участниками
   useWebRTC({
     socket,
@@ -69,6 +73,13 @@ function RoomScreen() {
         next.delete(socketId);
         return next;
       });
+    },
+    onConnectionStateChange: (socketId, state) => {
+      if (state === 'failed' || state === 'disconnected') {
+        setConnectionIssue(state);
+      } else if (state === 'connected' || state === 'completed') {
+        setConnectionIssue(null);
+      }
     }
   });
 
@@ -182,6 +193,8 @@ function RoomScreen() {
           onDismiss={() => setMediaErrorDismissed(true)}
         />
       )}
+
+      <ConnectionStatusBanner state={connectionIssue} />
 
       <div className="flex flex-1 overflow-hidden">
         <main className="relative flex flex-1 items-center justify-center p-4">

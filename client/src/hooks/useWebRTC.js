@@ -13,6 +13,7 @@ const ICE_SERVERS = [
  * @param {MediaStream} params.localStream
  * @param {(socketId: string, stream: MediaStream) => void} params.onRemoteStream
  * @param {(socketId: string) => void} params.onPeerLeft
+ * @param {(socketId: string, state: string) => void} [params.onConnectionStateChange]
  * @returns {{
  *   peers: Map<string, RTCPeerConnection>,
  *   createPeerConnection: (socketId: string, isInitiator: boolean) => Promise<void>,
@@ -20,7 +21,7 @@ const ICE_SERVERS = [
  *   closeAllConnections: () => void
  * }}
  */
-export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
+export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft, onConnectionStateChange }) {
   const peersRef = useRef(new Map());
   const [peers, setPeers] = useState(new Map());
 
@@ -31,6 +32,7 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
 
   const pendingCandidatesRef = useRef(new Map());
   const pendingInitiatorsRef = useRef([]);
+  const disconnectTimersRef = useRef(new Map());
 
   const setupPeerConnection = (socketId) => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -58,9 +60,32 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
       }
     };
 
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+
+      if (onConnectionStateChange) {
+        onConnectionStateChange(socketId, state);
+      }
+
+      if (state === 'failed') {
+        // Соединение окончательно потеряно — закрываем сразу
         closePeerConnection(socketId);
+      } else if (state === 'disconnected') {
+        // Временный разрыв — даём 5 сек на восстановление
+        const timer = setTimeout(() => {
+          const current = peersRef.current.get(socketId);
+          if (current && current.iceConnectionState === 'disconnected') {
+            closePeerConnection(socketId);
+          }
+        }, 5000);
+        disconnectTimersRef.current.set(socketId, timer);
+      } else if (state === 'connected' || state === 'completed') {
+        // Восстановилось — отменяем таймер закрытия
+        const timer = disconnectTimersRef.current.get(socketId);
+        if (timer) {
+          clearTimeout(timer);
+          disconnectTimersRef.current.delete(socketId);
+        }
       }
     };
 
@@ -153,6 +178,13 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
       pc.close();
       peersRef.current.delete(socketId);
       pendingCandidatesRef.current.delete(socketId);
+
+      const timer = disconnectTimersRef.current.get(socketId);
+      if (timer) {
+        clearTimeout(timer);
+        disconnectTimersRef.current.delete(socketId);
+      }
+
       setPeers(new Map(peersRef.current));
 
       if (onPeerLeft) {
@@ -167,6 +199,10 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     });
     peersRef.current.clear();
     pendingCandidatesRef.current.clear();
+
+    disconnectTimersRef.current.forEach((timer) => clearTimeout(timer));
+    disconnectTimersRef.current.clear();
+
     setPeers(new Map());
   };
 
