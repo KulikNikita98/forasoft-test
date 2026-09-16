@@ -10,8 +10,8 @@ class Participant {
     this.socketId = socketId;
     this.userName = userName;
     this.mediaState = {
-      audio: true,
-      video: true
+      audio: false,
+      video: false
     };
     this.joinedAt = Date.now();
   }

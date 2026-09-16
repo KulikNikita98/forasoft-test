@@ -39,7 +39,7 @@ describe('VideoGrid', () => {
     expect(grid?.className).toContain('grid-cols-1');
   });
 
-  it('применяет grid-cols-1 md:grid-cols-2 для двух участников', () => {
+  it('применяет grid-cols-1 sm:grid-cols-2 для двух участников', () => {
     const { container } = render(
       <VideoGrid
         participants={[
@@ -54,7 +54,7 @@ describe('VideoGrid', () => {
 
     const grid = container.firstChild;
     expect(grid?.className).toContain('grid-cols-1');
-    expect(grid?.className).toContain('md:grid-cols-2');
+    expect(grid?.className).toContain('sm:grid-cols-2');
   });
 
   it('применяет grid-cols-2 для трех участников', () => {

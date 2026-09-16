@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket.js';
 import { useMedia } from '../../hooks/useMedia.js';
@@ -13,6 +13,23 @@ import { ParticipantList } from '../participant/index.js';
 import { VideoGrid } from '../video/index.js';
 import { Controls } from '../controls/index.js';
 import { Chat } from '../chat/index.js';
+
+const LOCAL_ID = 'local';
+
+/**
+ * Нормализует участника с сервера: маппит mediaState в isMuted/isVideoOff.
+ * Сервер отдаёт { socketId, userName, mediaState: { audio, video } },
+ * а компоненты ожидают { isMuted, isVideoOff }.
+ */
+function normalizeParticipant(p) {
+  const audio = p.mediaState?.audio ?? false;
+  const video = p.mediaState?.video ?? false;
+  return {
+    ...p,
+    isMuted: !audio,
+    isVideoOff: !video
+  };
+}
 
 /**
  * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты:
@@ -32,112 +49,197 @@ function RoomScreen() {
     enabled: Boolean(userName)
   });
 
-  // Актуальный socket доступен в колбэках без пересоздания useMedia
+  // Актуальный socket доступен в колбэках без пересоздания хуков
   const socketRef = useRef(null);
   useEffect(() => {
     socketRef.current = socket;
   }, [socket]);
 
+  // ---------------------------------------------------------------------------
+  // Медиа
+  // ---------------------------------------------------------------------------
   const {
     localStream,
     isAudioEnabled,
     isVideoEnabled,
+    hasAudioTrack,
+    hasVideoTrack,
     error: mediaError,
     startMedia,
+    stopMedia,
     toggleAudio,
     toggleVideo
   } = useMedia({
     onDeviceLost: (kind) => {
       // Устройство пропало во время звонка — сообщаем остальным
-      if (socketRef.current) {
-        socketRef.current.emit('media-state', { kind, enabled: false });
+      const s = socketRef.current;
+      if (!s) return;
+
+      if (kind === 'audio') {
+        s.emit('media-state', {
+          audio: false,
+          video: isVideoEnabled
+        });
+      } else if (kind === 'video') {
+        s.emit('media-state', {
+          audio: isAudioEnabled,
+          video: false
+        });
       }
     }
   });
 
-  // Список участников в реальном времени
+  // ---------------------------------------------------------------------------
+  // Локальное состояние UI
+  // ---------------------------------------------------------------------------
   const [participants, setParticipants] = useState([]);
-
-  // Сообщения чата (user + system)
   const [messages, setMessages] = useState([]);
-
-  // Показ баннера ошибки медиа (можно закрыть)
   const [mediaErrorDismissed, setMediaErrorDismissed] = useState(false);
-
-  // Разблокировка remote audio (autoplay policy). Показываем оверлей, пока есть удалённые участники.
   const [audioUnlocked, setAudioUnlocked] = useState(false);
-
-  // Удалённые потоки: Map<socketId, MediaStream>
   const [remoteStreams, setRemoteStreams] = useState(new Map());
+  const [connectionIssues, setConnectionIssues] = useState(new Map());
 
-  // Проблема с P2P-соединением ('disconnected' | 'failed' | null)
-  const [connectionIssue, setConnectionIssue] = useState(null);
+  // Показываем баннер, если есть хоть одна проблемная пара
+  const connectionIssue = useMemo(() => {
+    if (connectionIssues.size === 0) return null;
+    // Приоритет: failed > disconnected
+    const values = Array.from(connectionIssues.values());
+    if (values.includes('failed')) return 'failed';
+    if (values.includes('disconnected')) return 'disconnected';
+    return null;
+  }, [connectionIssues]);
 
-  // WebRTC: создание P2P соединений с участниками
-  useWebRTC({
+  // ---------------------------------------------------------------------------
+  // WebRTC
+  // ---------------------------------------------------------------------------
+  const { closeAllConnections } = useWebRTC({
     socket,
     localStream,
     onRemoteStream: (socketId, stream) => {
-      setRemoteStreams((prev) => new Map(prev).set(socketId, stream));
+      setRemoteStreams((prev) => {
+        // Не пересоздаём Map, если stream не изменился — важно для memo(VideoTile)
+        if (prev.get(socketId) === stream) return prev;
+        const next = new Map(prev);
+        next.set(socketId, stream);
+        return next;
+      });
     },
     onPeerLeft: (socketId) => {
       setRemoteStreams((prev) => {
+        if (!prev.has(socketId)) return prev;
         const next = new Map(prev);
         next.delete(socketId);
         return next;
       });
     },
     onConnectionStateChange: (socketId, state) => {
-      if (state === 'failed' || state === 'disconnected') {
-        setConnectionIssue(state);
-      } else if (state === 'connected' || state === 'completed') {
-        setConnectionIssue(null);
-      }
+      setConnectionIssues((prev) => {
+        const next = new Map(prev);
+        if (state === 'failed' || state === 'disconnected') {
+          next.set(socketId, state);
+        } else if (
+          state === 'connected' ||
+          state === 'completed' ||
+          state === 'closed'
+        ) {
+          next.delete(socketId);
+        }
+        return next;
+      });
     }
   });
 
-  // Запуск локального потока при успешном подключении
-  useEffect(() => {
-    if (status === 'connected') {
-      startMedia();
-    }
-  }, [status]);
+  // ---------------------------------------------------------------------------
+  // Полный список участников (локальный + удалённые)
+  // ---------------------------------------------------------------------------
+  const allParticipants = useMemo(() => {
+    return [
+      {
+        socketId: LOCAL_ID,
+        userName,
+        isMuted: !isAudioEnabled,
+        isVideoOff: !isVideoEnabled,
+        isLocal: true
+      },
+      ...participants
+    ];
+  }, [userName, isAudioEnabled, isVideoEnabled, participants]);
 
-  // Инициализация списка участников и истории чата из room-joined
+  // ---------------------------------------------------------------------------
+  // Инициализация из roomState (первый room-joined)
+  // ---------------------------------------------------------------------------
+  const initializedRef = useRef(false);
+
   useEffect(() => {
-    if (roomState) {
-      setParticipants(roomState.participants);
-      setMessages(roomState.chatHistory);
+    if (!roomState) return;
+
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      setParticipants((roomState.participants || []).map(normalizeParticipant));
+      setMessages(roomState.chatHistory || []);
+    } else {
+      // Реконнект: не затираем накопленную историю чата
+      setParticipants((prev) => {
+        const byId = new Map(prev.map((p) => [p.socketId, p]));
+        (roomState.participants || []).forEach((p) => {
+          if (!byId.has(p.socketId)) byId.set(p.socketId, normalizeParticipant(p));
+        });
+        return Array.from(byId.values());
+      });
     }
   }, [roomState]);
 
-  // Обновление участников через user-joined / user-left
+  // ---------------------------------------------------------------------------
+  // Socket-события: участники
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!socket) return undefined;
 
     const onUserJoined = (participant) => {
-      setParticipants((prev) => [...prev, participant]);
+      setParticipants((prev) => {
+        if (prev.some((p) => p.socketId === participant.socketId)) return prev;
+        return [...prev, normalizeParticipant(participant)];
+      });
     };
+
     const onUserLeft = ({ socketId }) => {
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
     };
 
+    const onMediaStateChanged = ({ socketId, mediaState }) => {
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (p.socketId !== socketId) return p;
+          return {
+            ...p,
+            isMuted: !mediaState.audio,
+            isVideoOff: !mediaState.video
+          };
+        })
+      );
+    };
+
     socket.on('user-joined', onUserJoined);
     socket.on('user-left', onUserLeft);
+    socket.on('media-state-changed', onMediaStateChanged);
 
     return () => {
       socket.off('user-joined', onUserJoined);
       socket.off('user-left', onUserLeft);
+      socket.off('media-state-changed', onMediaStateChanged);
     };
   }, [socket]);
 
-  // Приём сообщений чата и системных событий
+  // ---------------------------------------------------------------------------
+  // Socket-события: чат
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!socket) return undefined;
 
     const onChatMessage = (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'user' }]);
     };
+
     const onSystemMessage = (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'system' }]);
     };
@@ -151,53 +253,98 @@ function RoomScreen() {
     };
   }, [socket]);
 
-  const handleSendMessage = (text) => {
-    if (socket) {
-      socket.emit('chat-message', { message: text });
-    }
-  };
+  // ---------------------------------------------------------------------------
+  // Сброс баннера ошибки медиа при новой ошибке
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (mediaError) setMediaErrorDismissed(false);
+  }, [mediaError]);
 
-  const handleToggleMic = () => {
-    toggleAudio();
-    if (socket) {
-      socket.emit('media-state', { kind: 'audio', enabled: !isAudioEnabled });
-    }
-  };
+  // ---------------------------------------------------------------------------
+  // Хэндлеры
+  // ---------------------------------------------------------------------------
+  const handleSendMessage = useCallback(
+    (text) => {
+      if (!text || !text.trim()) return;
+      socketRef.current?.emit('chat-message', { message: text });
+    },
+    []
+  );
 
-  const handleToggleVideo = () => {
-    toggleVideo();
-    if (socket) {
-      socket.emit('media-state', { kind: 'video', enabled: !isVideoEnabled });
-    }
-  };
+  // Гарантирует наличие потока. initialState задаёт, какие треки должны быть
+  // включены сразу после захвата — иначе getUserMedia поднимет оба трека enabled.
+  const ensureMedia = useCallback(async (initialState) => {
+    if (localStream) return true;
+    const stream = await startMedia({ initialState });
+    return Boolean(stream);
+  }, [localStream, startMedia]);
 
-  const handleLeave = () => {
-    if (socket) {
-      socket.emit('leave-room');
-      socket.disconnect();
+  const handleToggleMic = useCallback(async () => {
+    const next = !isAudioEnabled;
+    // Первый захват: включаем только запрошенное устройство, видео — как сейчас
+    const ok = await ensureMedia({ audio: next, video: isVideoEnabled });
+    if (!ok) return;
+
+    toggleAudio(next);
+
+    socketRef.current?.emit('media-state', {
+      audio: next,
+      video: isVideoEnabled
+    });
+  }, [ensureMedia, isAudioEnabled, isVideoEnabled, toggleAudio]);
+
+  const handleToggleVideo = useCallback(async () => {
+    const next = !isVideoEnabled;
+    const ok = await ensureMedia({ audio: isAudioEnabled, video: next });
+    if (!ok) return;
+
+    toggleVideo(next);
+
+    socketRef.current?.emit('media-state', {
+      audio: isAudioEnabled,
+      video: next
+    });
+  }, [ensureMedia, isAudioEnabled, isVideoEnabled, toggleVideo]);
+
+  const handleLeave = useCallback(() => {
+    // Явно останавливаем треки, чтобы камера/микрофон погасли до unmount
+    stopMedia();
+    closeAllConnections();
+
+    const s = socketRef.current;
+    if (s) {
+      s.emit('leave-room');
+      s.disconnect();
     }
+
     navigate('/');
-  };
+  }, [stopMedia, closeAllConnections, navigate]);
 
-  const handleUnlockAudio = () => {
+  const handleUnlockAudio = useCallback(() => {
     setAudioUnlocked(true);
-  };
+  }, []);
 
-  // Прямой вход по ссылке без имени — запросить имя
+  // ---------------------------------------------------------------------------
+  // Ранние возвраты (после всех хуков!)
+  // ---------------------------------------------------------------------------
   if (!userName) {
     return <NamePrompt onSubmit={setUserName} />;
   }
 
-  // Ошибка входа (комната заполнена / сервер недоступен)
   if (status === 'error' && error) {
     return <RoomError error={error} />;
   }
 
+  // ---------------------------------------------------------------------------
+  // Рендер
+  // ---------------------------------------------------------------------------
   return (
     <div className="flex h-screen flex-col bg-gray-900 text-white">
       <header className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-        <h1 className="text-lg font-semibold">Комната</h1>
-        <InviteButton />
+        <h1 className="text-lg font-semibold">
+          Комната <span className="text-sm text-gray-400">{roomId}</span>
+        </h1>
+        <InviteButton roomId={roomId} />
       </header>
 
       {mediaError && !mediaErrorDismissed && (
@@ -209,8 +356,8 @@ function RoomScreen() {
 
       <ConnectionStatusBanner state={connectionIssue} />
 
-      <div className="flex flex-1 overflow-hidden">
-        <main className="relative flex flex-1 items-center justify-center p-4">
+      <div className="flex flex-1 overflow-hidden flex-col md:flex-row">
+        <main className="relative flex flex-1 items-center justify-center p-4 min-h-0">
           {status === 'connecting' ? (
             <div className="text-gray-500">Подключение...</div>
           ) : (
@@ -221,6 +368,7 @@ function RoomScreen() {
               isLocalMuted={!isAudioEnabled}
               isLocalVideoOff={!isVideoEnabled}
               remoteStreams={remoteStreams}
+              audioUnlocked={audioUnlocked}
             />
           )}
 
@@ -229,8 +377,11 @@ function RoomScreen() {
           )}
         </main>
 
-        <aside className="flex w-72 flex-col gap-4 border-l border-gray-800 p-4">
-          <ParticipantList participants={participants} currentUserName={userName} />
+        <aside className="flex w-full md:w-72 flex-col gap-4 border-t md:border-t-0 md:border-l border-gray-800 p-4 max-h-64 md:max-h-none overflow-hidden">
+          <ParticipantList
+            participants={allParticipants}
+            currentUserName={userName}
+          />
           <div className="min-h-0 flex-1">
             <Chat
               messages={messages}
@@ -245,6 +396,9 @@ function RoomScreen() {
         <Controls
           isMicEnabled={isAudioEnabled}
           isVideoEnabled={isVideoEnabled}
+          hasMediaError={!!mediaError}
+          hasAudioTrack={hasAudioTrack}
+          hasVideoTrack={hasVideoTrack}
           onToggleMic={handleToggleMic}
           onToggleVideo={handleToggleVideo}
           onLeave={handleLeave}

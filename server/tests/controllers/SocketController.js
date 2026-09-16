@@ -97,7 +97,7 @@ describe('SocketController (integration)', () => {
 
     const payload = await userJoined;
     expect(payload.userName).toBe('Bob');
-    expect(payload.mediaState).toEqual({ audio: true, video: true });
+    expect(payload.mediaState).toEqual({ audio: false, video: false });
   });
 
   it('should broadcast chat-message to all participants', async () => {
@@ -282,10 +282,10 @@ describe('SocketController (integration)', () => {
     await waitFor(bob, 'room-joined');
 
     const mediaChanged = waitFor(alice, 'media-state-changed');
-    // Только audio; video должен прийти из модели (true по умолчанию)
-    bob.emit('media-state', { audio: false });
+    // Включаем только audio; video должен прийти из модели (false по умолчанию)
+    bob.emit('media-state', { audio: true });
 
     const payload = await mediaChanged;
-    expect(payload.mediaState).toEqual({ audio: false, video: true });
+    expect(payload.mediaState).toEqual({ audio: true, video: false });
   });
 });

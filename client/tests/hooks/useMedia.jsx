@@ -24,7 +24,8 @@ describe('useMedia', () => {
     mockStream = {
       getTracks: vi.fn(() => [mockAudioTrack, mockVideoTrack]),
       getAudioTracks: vi.fn(() => [mockAudioTrack]),
-      getVideoTracks: vi.fn(() => [mockVideoTrack])
+      getVideoTracks: vi.fn(() => [mockVideoTrack]),
+      removeTrack: vi.fn()
     };
 
     // Мок getUserMedia
@@ -71,6 +72,45 @@ describe('useMedia', () => {
     expect(result.current.localStream).toBe(mockStream);
     expect(result.current.isAudioEnabled).toBe(true);
     expect(result.current.isVideoEnabled).toBe(true);
+  });
+
+  it('initialState держит видео выключенным при включении только микрофона', async () => {
+    // getUserMedia отдаёт оба трека enabled=true, но пользователь включал
+    // только микрофон — видео-трек должен остаться выключенным (баг с автовключением)
+    const { result } = renderHook(() => useMedia());
+
+    await act(async () => {
+      await result.current.startMedia({ initialState: { audio: true, video: false } });
+    });
+
+    expect(mockAudioTrack.enabled).toBe(true);
+    expect(mockVideoTrack.enabled).toBe(false);
+    expect(result.current.isAudioEnabled).toBe(true);
+    expect(result.current.isVideoEnabled).toBe(false);
+  });
+
+  it('initialState держит микрофон выключенным при включении только камеры', async () => {
+    const { result } = renderHook(() => useMedia());
+
+    await act(async () => {
+      await result.current.startMedia({ initialState: { audio: false, video: true } });
+    });
+
+    expect(mockAudioTrack.enabled).toBe(false);
+    expect(mockVideoTrack.enabled).toBe(true);
+    expect(result.current.isAudioEnabled).toBe(false);
+    expect(result.current.isVideoEnabled).toBe(true);
+  });
+
+  it('принимает кастомные constraints через startMedia', async () => {
+    const { result } = renderHook(() => useMedia());
+    const custom = { audio: true, video: false };
+
+    await act(async () => {
+      await result.current.startMedia({ constraints: custom });
+    });
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith(custom);
   });
 
   it('останавливает все треки при stopMedia', async () => {

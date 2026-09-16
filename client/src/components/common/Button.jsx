@@ -6,6 +6,7 @@
  * @param {boolean} props.disabled
  * @param {boolean} props.fullWidth
  * @param {() => void} props.onClick
+ * @param {string} [props.className] — дополнительные классы (добавляются к базовым)
  * @param {React.ReactNode} props.children
  */
 function Button({
@@ -15,6 +16,7 @@ function Button({
   onClick,
   children,
   type = 'button',
+  className = '',
   ...rest
 }) {
   const baseClasses = 'rounded-lg px-4 py-2 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50';
@@ -27,12 +29,18 @@ function Button({
 
   const widthClass = fullWidth ? 'w-full' : '';
 
+  // className из props добавляется к внутренним классам, а не перезаписывает их.
+  // filter(Boolean) убирает пустые строки, чтобы не было двойных пробелов.
+  const classes = [baseClasses, variantClasses[variant], widthClass, className]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`${baseClasses} ${variantClasses[variant]} ${widthClass}`}
+      className={classes}
       {...rest}
     >
       {children}

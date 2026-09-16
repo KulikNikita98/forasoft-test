@@ -6,42 +6,49 @@ import Button from '../common/Button.jsx';
  * @param {object} props
  * @param {boolean} props.isMicEnabled — состояние микрофона
  * @param {boolean} props.isVideoEnabled — состояние камеры
+ * @param {boolean} props.hasMediaError — есть ли ошибка доступа к устройствам
  * @param {() => void} props.onToggleMic — переключить микрофон
  * @param {() => void} props.onToggleVideo — переключить камеру
  * @param {() => void} props.onLeave — выйти из комнаты
  */
-function Controls({ isMicEnabled, isVideoEnabled, onToggleMic, onToggleVideo, onLeave }) {
+function Controls({ isMicEnabled, isVideoEnabled, hasMediaError, onToggleMic, onToggleVideo, onLeave }) {
   return (
     <div className="flex items-center justify-center gap-4">
       {/* Кнопка микрофона */}
       <button
         onClick={onToggleMic}
+        disabled={hasMediaError}
         className={`rounded-full p-4 transition ${
-          isMicEnabled
+          hasMediaError
+            ? 'bg-gray-800 cursor-not-allowed opacity-50'
+            : isMicEnabled
             ? 'bg-gray-700 hover:bg-gray-600'
             : 'bg-red-600 hover:bg-red-700'
         }`}
-        title={isMicEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
-        aria-label={isMicEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
+        title={hasMediaError ? 'Устройство недоступно' : isMicEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
+        aria-label={hasMediaError ? 'Устройство недоступно' : isMicEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
       >
         <span className="text-2xl" aria-hidden="true">
-          {isMicEnabled ? '🎤' : '🔇'}
+          {hasMediaError ? '🚫' : isMicEnabled ? '🎤' : '🔇'}
         </span>
       </button>
 
       {/* Кнопка камеры */}
       <button
         onClick={onToggleVideo}
+        disabled={hasMediaError}
         className={`rounded-full p-4 transition ${
-          isVideoEnabled
+          hasMediaError
+            ? 'bg-gray-800 cursor-not-allowed opacity-50'
+            : isVideoEnabled
             ? 'bg-gray-700 hover:bg-gray-600'
             : 'bg-red-600 hover:bg-red-700'
         }`}
-        title={isVideoEnabled ? 'Выключить камеру' : 'Включить камеру'}
-        aria-label={isVideoEnabled ? 'Выключить камеру' : 'Включить камеру'}
+        title={hasMediaError ? 'Устройство недоступно' : isVideoEnabled ? 'Выключить камеру' : 'Включить камеру'}
+        aria-label={hasMediaError ? 'Устройство недоступно' : isVideoEnabled ? 'Выключить камеру' : 'Включить камеру'}
       >
         <span className="text-2xl" aria-hidden="true">
-          {isVideoEnabled ? '📹' : '📷'}
+          {hasMediaError ? '🚫' : isVideoEnabled ? '📹' : '📷'}
         </span>
       </button>
 

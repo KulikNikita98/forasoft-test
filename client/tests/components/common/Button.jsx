@@ -54,4 +54,22 @@ describe('Button', () => {
     const button = screen.getByRole('button');
     expect(button).toHaveClass('w-full');
   });
+
+  it('добавляет переданный className к базовым, не перезаписывая их', () => {
+    render(<Button className="mt-4 custom-class">С классом</Button>);
+    const button = screen.getByRole('button');
+
+    // Внешний класс применён
+    expect(button).toHaveClass('mt-4');
+    expect(button).toHaveClass('custom-class');
+    // Внутренние классы сохранены
+    expect(button).toHaveClass('bg-blue-600');
+    expect(button).toHaveClass('rounded-lg');
+  });
+
+  it('не оставляет двойных пробелов в className без внешнего класса', () => {
+    render(<Button>Без класса</Button>);
+    const button = screen.getByRole('button');
+    expect(button.className).not.toMatch(/\s{2,}/);
+  });
 });

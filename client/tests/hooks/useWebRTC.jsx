@@ -1,59 +1,123 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useWebRTC } from '../../src/hooks/useWebRTC.js';
 
 describe('useWebRTC', () => {
   let mockSocket;
   let mockLocalStream;
+  // Последнее созданное соединение — к нему обращаются тесты с одним пиром
   let mockPeerConnection;
+  // Спаи общие для всех соединений, чтобы считать вызовы суммарно
+  let spies;
   let onRemoteStream;
   let onPeerLeft;
 
   beforeEach(() => {
-    // Мок Socket.io
+    // socket.id нужен для glare-правила: инициирует тот, чей id меньше.
+    // 'aaa-me' < 'peer-*', значит в тестах мы — инициатор.
     mockSocket = {
+      id: 'aaa-me',
       on: vi.fn(),
       off: vi.fn(),
       emit: vi.fn()
     };
 
-    // Мок MediaStream
+    const audioTrack = { kind: 'audio', id: 'a1' };
+    const videoTrack = { kind: 'video', id: 'v1' };
     mockLocalStream = {
-      getTracks: vi.fn(() => [
-        { kind: 'audio' },
-        { kind: 'video' }
-      ])
+      getTracks: vi.fn(() => [audioTrack, videoTrack]),
+      getAudioTracks: vi.fn(() => [audioTrack]),
+      getVideoTracks: vi.fn(() => [videoTrack])
     };
 
-    // Мок RTCPeerConnection
-    mockPeerConnection = {
-      addTrack: vi.fn(),
+    // Фабрика transceiver-мока: sender с replaceTrack/setStreams
+    const makeTransceiver = (kindOrTrack, init) => {
+      const track = typeof kindOrTrack === 'string' ? null : kindOrTrack;
+      const kind = typeof kindOrTrack === 'string' ? kindOrTrack : kindOrTrack?.kind;
+      const transceiver = {
+        _kind: kind,
+        direction: init?.direction || 'sendrecv',
+        stopped: false,
+        sender: {
+          track,
+          replaceTrack: vi.fn(function (t) { this.track = t; return Promise.resolve(); }),
+          setStreams: vi.fn()
+        },
+        receiver: { track: null }
+      };
+      return transceiver;
+    };
+
+    // set*Description меняют signalingState через this — как настоящая state machine
+    spies = {
+      addTransceiver: vi.fn((kindOrTrack, init) => makeTransceiver(kindOrTrack, init)),
+      getSenders: vi.fn(function () {
+        return (this._transceivers || []).map((t) => t.sender);
+      }),
+      getTransceivers: vi.fn(function () {
+        return this._transceivers || [];
+      }),
       createOffer: vi.fn(() => Promise.resolve({ type: 'offer', sdp: 'mock-sdp' })),
       createAnswer: vi.fn(() => Promise.resolve({ type: 'answer', sdp: 'mock-sdp' })),
-      setLocalDescription: vi.fn(() => Promise.resolve()),
-      setRemoteDescription: vi.fn(function () {
-        this.remoteDescription = { type: 'offer' };
+      setLocalDescription: vi.fn(function (desc) {
+        if (desc?.type === 'rollback') {
+          this.signalingState = 'stable';
+          return Promise.resolve();
+        }
+        // Вызов с offer из createOffer или answer
+        const description = desc ?? { type: 'offer', sdp: 'auto-sdp' };
+        this.localDescription = description;
+        this.signalingState =
+          description.type === 'answer' ? 'stable' : 'have-local-offer';
+        return Promise.resolve();
+      }),
+      setRemoteDescription: vi.fn(function (desc) {
+        this.remoteDescription = desc;
+        this.signalingState = desc?.type === 'offer' ? 'have-remote-offer' : 'stable';
         return Promise.resolve();
       }),
       addIceCandidate: vi.fn(() => Promise.resolve()),
-      close: vi.fn(),
-      connectionState: 'connected',
-      iceConnectionState: 'connected',
-      remoteDescription: null,
-      ontrack: null,
-      onicecandidate: null,
-      onconnectionstatechange: null,
-      oniceconnectionstatechange: null
+      close: vi.fn()
     };
 
-    global.RTCPeerConnection = vi.fn(function() {
-      return mockPeerConnection;
+    // Каждое соединение получает собственное состояние, но общие спаи.
+    // _transceivers накапливает созданные addTransceiver'ом слоты.
+    global.RTCPeerConnection = vi.fn(function () {
+      const pc = {
+        ...spies,
+        _transceivers: [],
+        signalingState: 'stable',
+        connectionState: 'connected',
+        iceConnectionState: 'connected',
+        remoteDescription: null,
+        localDescription: null,
+        ontrack: null,
+        onicecandidate: null,
+        onnegotiationneeded: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null
+      };
+      // addTransceiver должен складывать слот в _transceivers этого pc
+      pc.addTransceiver = vi.fn((kindOrTrack, init) => {
+        const t = makeTransceiver(kindOrTrack, init);
+        pc._transceivers.push(t);
+        return t;
+      });
+      mockPeerConnection = pc;
+      return pc;
     });
     global.RTCSessionDescription = vi.fn(function (desc) {
       return desc;
     });
     global.RTCIceCandidate = vi.fn(function (candidate) {
       return candidate;
+    });
+    global.MediaStream = vi.fn(function () {
+      const tracks = [];
+      return {
+        getTracks: () => tracks,
+        addTrack: (t) => { if (!tracks.includes(t)) tracks.push(t); }
+      };
     });
 
     onRemoteStream = vi.fn();
@@ -94,7 +158,8 @@ describe('useWebRTC', () => {
       ]
     });
 
-    expect(mockPeerConnection.addTrack).toHaveBeenCalledTimes(2);
+    // Слоты audio/video зарезервированы через addTransceiver в фиксированном порядке
+    expect(mockPeerConnection.addTransceiver).toHaveBeenCalledTimes(2);
     expect(mockPeerConnection.createOffer).toHaveBeenCalled();
     expect(mockSocket.emit).toHaveBeenCalledWith('offer', {
       targetSocketId: 'peer-123',
@@ -122,7 +187,7 @@ describe('useWebRTC', () => {
     expect(result.current.peers.size).toBe(1);
   });
 
-  it('добавляет локальные треки в peer connection', async () => {
+  it('привязывает локальные треки к transceiver-слотам через replaceTrack', async () => {
     const { result } = renderHook(() =>
       useWebRTC({
         socket: mockSocket,
@@ -136,14 +201,13 @@ describe('useWebRTC', () => {
       await result.current.createPeerConnection('peer-123', false);
     });
 
-    expect(mockPeerConnection.addTrack).toHaveBeenCalledWith(
-      { kind: 'audio' },
-      mockLocalStream
-    );
-    expect(mockPeerConnection.addTrack).toHaveBeenCalledWith(
-      { kind: 'video' },
-      mockLocalStream
-    );
+    // Треки навешиваются на зарезервированные слоты через sender.replaceTrack,
+    // а не addTrack — иначе порядок m-lines в SDP расходился бы между пирами
+    const transceivers = mockPeerConnection._transceivers;
+    expect(transceivers).toHaveLength(2);
+    // Первый слот — audio, второй — video (фиксированный порядок)
+    expect(transceivers[0].sender.setStreams).toHaveBeenCalled();
+    expect(transceivers[1].sender.setStreams).toHaveBeenCalled();
   });
 
   it('вызывает onRemoteStream при получении remote track', async () => {
@@ -160,13 +224,15 @@ describe('useWebRTC', () => {
       await result.current.createPeerConnection('peer-123', false);
     });
 
-    const mockRemoteStream = { id: 'remote-stream' };
-
+    // event.streams пуст → трек агрегируется в собственный MediaStream пира
+    const remoteTrack = { id: 't1', kind: 'video' };
     act(() => {
-      mockPeerConnection.ontrack({ streams: [mockRemoteStream] });
+      mockPeerConnection.ontrack({ track: remoteTrack, streams: [] });
     });
 
-    expect(onRemoteStream).toHaveBeenCalledWith('peer-123', mockRemoteStream);
+    expect(onRemoteStream).toHaveBeenCalledWith('peer-123', expect.any(Object));
+    const [, stream] = onRemoteStream.mock.calls[0];
+    expect(stream.getTracks()).toContain(remoteTrack);
   });
 
   it('отправляет ICE candidates через socket', async () => {
@@ -338,6 +404,132 @@ describe('useWebRTC', () => {
     }));
   });
 
+  it('пересоздаёт соединение при InvalidAccessError (рассинхрон m-lines)', async () => {
+    // setRemoteDescription падает с InvalidAccessError на первом вызове →
+    // соединение должно пересоздаться, а не остаться мёртвым.
+    const err = new Error('order of m-lines does not match');
+    err.name = 'InvalidAccessError';
+    let firstCall = true;
+    // Переопределяем на уровне общих spies — применится ко всем создаваемым PC
+    spies.setRemoteDescription = vi.fn(function (desc) {
+      if (firstCall) {
+        firstCall = false;
+        return Promise.reject(err);
+      }
+      this.remoteDescription = desc;
+      this.signalingState = desc?.type === 'offer' ? 'have-remote-offer' : 'stable';
+      return Promise.resolve();
+    });
+
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onOffer = getHandler('offer');
+
+    await act(async () => {
+      await onOffer({ from: 'zzz-peer', sdp: { type: 'offer', sdp: 'x' } });
+    });
+
+    // Битое соединение закрыто и пересоздано
+    expect(spies.close).toHaveBeenCalled();
+    // Второе соединение создано (RTCPeerConnection вызван повторно)
+    expect(RTCPeerConnection.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('очередь negotiation: повторный onnegotiationneeded во время активной откладывается и запускается после answer', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    // Создаём соединение как инициатор — уходит первый offer
+    await act(async () => {
+      await result.current.createPeerConnection('zzz-peer', true);
+    });
+
+    const offersBefore = mockSocket.emit.mock.calls.filter(([e]) => e === 'offer').length;
+    expect(offersBefore).toBe(1);
+    // После createOffer соединение в have-local-offer (не stable)
+    expect(mockPeerConnection.signalingState).toBe('have-local-offer');
+
+    // Пока ждём answer, приходит запрос на renegotiation (напр. включили камеру).
+    // Он не должен потеряться — откладывается, т.к. pc не в stable.
+    act(() => {
+      mockPeerConnection.onnegotiationneeded();
+    });
+
+    // Новый offer пока НЕ ушёл (соединение ещё не stable)
+    const offersMid = mockSocket.emit.mock.calls.filter(([e]) => e === 'offer').length;
+    expect(offersMid).toBe(1);
+
+    // Приходит answer → соединение возвращается в stable → отложенный offer уходит
+    const onAnswer = getHandler('answer');
+    await act(async () => {
+      await onAnswer({ from: 'zzz-peer', sdp: { type: 'answer', sdp: 'a' } });
+    });
+
+    const offersAfter = mockSocket.emit.mock.calls.filter(([e]) => e === 'offer').length;
+    expect(offersAfter).toBe(2);
+  });
+
+  it('glare: инициирует только к участникам с бо́льшим id, к меньшим ждёт offer', async () => {
+    // Наш id 'aaa-me' < 'zzz-peer' (инициируем) и > 'aa-peer' (ждём)
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onRoomJoined = getHandler('room-joined');
+
+    await act(async () => {
+      onRoomJoined({
+        participants: [{ socketId: 'zzz-peer' }, { socketId: 'aa-peer' }]
+      });
+    });
+
+    // Offer уходит только тому, чей id больше нашего
+    const offerTargets = mockSocket.emit.mock.calls
+      .filter(([event]) => event === 'offer')
+      .map(([, payload]) => payload.targetSocketId);
+    expect(offerTargets).toEqual(['zzz-peer']);
+  });
+
+  it('glare: новичок с бо́льшим id не инициирует, а ждёт offer (polite)', async () => {
+    // Наш id 'aaa-me' > 'aa-peer' → мы polite, offer не шлём
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onUserJoined = getHandler('user-joined');
+
+    await act(async () => {
+      onUserJoined({ socketId: 'aa-peer' });
+    });
+
+    expect(mockPeerConnection.createOffer).not.toHaveBeenCalled();
+    const offerCalls = mockSocket.emit.mock.calls.filter(([e]) => e === 'offer');
+    expect(offerCalls).toHaveLength(0);
+  });
+
   it('закрывает соединение при user-left', async () => {
     const { result } = renderHook(() =>
       useWebRTC({
@@ -376,9 +568,87 @@ describe('useWebRTC', () => {
 
     // Кандидат приходит раньше, чем создан PC → буферизуется, не падает
     await act(async () => {
-      await onIce({ fromSocketId: 'peer-1', candidate: { candidate: 'c1' } });
+      await onIce({ from: 'peer-1', candidate: { candidate: 'c1' } });
     });
 
+    expect(mockPeerConnection.addIceCandidate).not.toHaveBeenCalled();
+  });
+
+  it('читает ICE-кандидат из поля from (регрессия: раньше читали fromSocketId)', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    // Соединение готово принимать кандидаты: есть remoteDescription И stable
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+      mockPeerConnection.remoteDescription = { type: 'offer' };
+      mockPeerConnection.signalingState = 'stable';
+    });
+
+    const onIce = getHandler('ice-candidate');
+    await act(async () => {
+      await onIce({ from: 'peer-1', candidate: { candidate: 'c1' } });
+    });
+
+    // Кандидат нашёл своё соединение по from и применился — ICE может стартовать
+    expect(mockPeerConnection.addIceCandidate).toHaveBeenCalledWith({ candidate: 'c1' });
+  });
+
+  it('игнорирует пустой ICE-кандидат (end-of-candidates)', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+      mockPeerConnection.remoteDescription = { type: 'offer' };
+      mockPeerConnection.signalingState = 'stable';
+    });
+
+    const onIce = getHandler('ice-candidate');
+    // Пустой candidate (маркер конца сбора) не должен доходить до addIceCandidate
+    await act(async () => {
+      await onIce({ from: 'peer-1', candidate: { candidate: '' } });
+      await onIce({ from: 'peer-1', candidate: null });
+    });
+
+    expect(mockPeerConnection.addIceCandidate).not.toHaveBeenCalled();
+  });
+
+  it('буферизует кандидат во время (ре)негоциации (signalingState !== stable)', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    // remoteDescription есть, но идёт негоциация — браузер отклонил бы кандидат
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+      mockPeerConnection.remoteDescription = { type: 'offer' };
+      mockPeerConnection.signalingState = 'have-local-offer';
+    });
+
+    const onIce = getHandler('ice-candidate');
+    await act(async () => {
+      await onIce({ from: 'peer-1', candidate: { candidate: 'c1' } });
+    });
+
+    // Кандидат отложен, а не применён к неготовому соединению
     expect(mockPeerConnection.addIceCandidate).not.toHaveBeenCalled();
   });
 
