@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket.js';
 import { useMedia } from '../../hooks/useMedia.js';
 import NamePrompt from './NamePrompt.jsx';
@@ -7,6 +7,7 @@ import RoomError from './RoomError.jsx';
 import InviteButton from './InviteButton.jsx';
 import { ParticipantList } from '../participant/index.js';
 import { VideoGrid } from '../video/index.js';
+import { Controls } from '../controls/index.js';
 
 /**
  * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты.
@@ -15,6 +16,7 @@ import { VideoGrid } from '../video/index.js';
 function RoomScreen() {
   const { roomId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Имя из navigation state (пришли со StartScreen) или запросим через NamePrompt
   const [userName, setUserName] = useState(location.state?.userName || '');
@@ -26,7 +28,7 @@ function RoomScreen() {
   });
 
   // Локальные медиа-устройства (задача 13)
-  const { localStream, isAudioEnabled, isVideoEnabled, startMedia } = useMedia();
+  const { localStream, isAudioEnabled, isVideoEnabled, startMedia, toggleAudio, toggleVideo } = useMedia();
 
   // Список участников в реальном времени
   const [participants, setParticipants] = useState([]);
@@ -64,6 +66,29 @@ function RoomScreen() {
       socket.off('user-left', onUserLeft);
     };
   }, [socket]);
+
+  // Обработчики Controls
+  const handleToggleMic = () => {
+    toggleAudio();
+    if (socket) {
+      socket.emit('media-state', { kind: 'audio', enabled: !isAudioEnabled });
+    }
+  };
+
+  const handleToggleVideo = () => {
+    toggleVideo();
+    if (socket) {
+      socket.emit('media-state', { kind: 'video', enabled: !isVideoEnabled });
+    }
+  };
+
+  const handleLeave = () => {
+    if (socket) {
+      socket.emit('leave-room');
+      socket.disconnect();
+    }
+    navigate('/');
+  };
 
   // Прямой вход по ссылке без имени — запросить имя
   if (!userName) {
@@ -109,8 +134,14 @@ function RoomScreen() {
       </div>
 
       {/* Панель управления (задача 15) */}
-      <footer className="border-t border-gray-800 px-4 py-3 text-center text-sm text-gray-500">
-        Панель управления (в разработке — задача 15)
+      <footer className="border-t border-gray-800 px-4 py-3">
+        <Controls
+          isMicEnabled={isAudioEnabled}
+          isVideoEnabled={isVideoEnabled}
+          onToggleMic={handleToggleMic}
+          onToggleVideo={handleToggleVideo}
+          onLeave={handleLeave}
+        />
       </footer>
     </div>
   );
