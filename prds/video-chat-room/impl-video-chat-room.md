@@ -232,7 +232,7 @@
   - 18.5. PC между существующими участниками НЕ пересоздаётся при входе нового — создаются только новые связи с новым участником
   - _Requirements: F-06, F-07, NFR-PERF, Design: 7 (glare rule, sequenceDiagram), 9_
 
-- [ ] 19. **ICE connection states**
+- [x] 19. **ICE connection states**
   - Обработка состояний соединения и UI-индикаторы
   - После задачи 18
   - 19.1. `iceConnectionState === 'failed'` → «Соединение потеряно», предложить перезайти
