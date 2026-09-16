@@ -31,10 +31,14 @@ describe('useWebRTC', () => {
       createOffer: vi.fn(() => Promise.resolve({ type: 'offer', sdp: 'mock-sdp' })),
       createAnswer: vi.fn(() => Promise.resolve({ type: 'answer', sdp: 'mock-sdp' })),
       setLocalDescription: vi.fn(() => Promise.resolve()),
-      setRemoteDescription: vi.fn(() => Promise.resolve()),
+      setRemoteDescription: vi.fn(function () {
+        this.remoteDescription = { type: 'offer' };
+        return Promise.resolve();
+      }),
       addIceCandidate: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       connectionState: 'connected',
+      remoteDescription: null,
       ontrack: null,
       onicecandidate: null,
       onconnectionstatechange: null
@@ -43,8 +47,12 @@ describe('useWebRTC', () => {
     global.RTCPeerConnection = vi.fn(function() {
       return mockPeerConnection;
     });
-    global.RTCSessionDescription = vi.fn((desc) => desc);
-    global.RTCIceCandidate = vi.fn((candidate) => candidate);
+    global.RTCSessionDescription = vi.fn(function (desc) {
+      return desc;
+    });
+    global.RTCIceCandidate = vi.fn(function (candidate) {
+      return candidate;
+    });
 
     onRemoteStream = vi.fn();
     onPeerLeft = vi.fn();
@@ -265,8 +273,110 @@ describe('useWebRTC', () => {
     unmount();
 
     expect(mockPeerConnection.close).toHaveBeenCalled();
-    expect(mockSocket.off).toHaveBeenCalledWith('offer');
-    expect(mockSocket.off).toHaveBeenCalledWith('answer');
-    expect(mockSocket.off).toHaveBeenCalledWith('ice-candidate');
+    expect(mockSocket.off).toHaveBeenCalledWith('offer', expect.any(Function));
+    expect(mockSocket.off).toHaveBeenCalledWith('answer', expect.any(Function));
+    expect(mockSocket.off).toHaveBeenCalledWith('ice-candidate', expect.any(Function));
+  });
+
+  // Хелпер: получить обработчик socket-события по имени
+  const getHandler = (eventName) => {
+    const call = mockSocket.on.mock.calls.find(([name]) => name === eventName);
+    return call?.[1];
+  };
+
+  it('инициирует offer каждому существующему участнику при room-joined (glare rule)', async () => {
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onRoomJoined = getHandler('room-joined');
+
+    await act(async () => {
+      onRoomJoined({
+        participants: [{ socketId: 'peer-1' }, { socketId: 'peer-2' }]
+      });
+    });
+
+    // Новичок создаёт offer каждому из двух существующих участников
+    expect(mockPeerConnection.createOffer).toHaveBeenCalledTimes(2);
+    expect(mockSocket.emit).toHaveBeenCalledWith('offer', expect.objectContaining({
+      targetSocketId: 'peer-1'
+    }));
+    expect(mockSocket.emit).toHaveBeenCalledWith('offer', expect.objectContaining({
+      targetSocketId: 'peer-2'
+    }));
+  });
+
+  it('создаёт PC лениво и отвечает answer на входящий offer', async () => {
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onOffer = getHandler('offer');
+
+    await act(async () => {
+      await onOffer({ from: 'peer-1', sdp: { type: 'offer', sdp: 'x' } });
+    });
+
+    // Существующий участник только отвечает — createOffer не вызывается
+    expect(mockPeerConnection.createOffer).not.toHaveBeenCalled();
+    expect(mockPeerConnection.createAnswer).toHaveBeenCalled();
+    expect(mockSocket.emit).toHaveBeenCalledWith('answer', expect.objectContaining({
+      targetSocketId: 'peer-1'
+    }));
+  });
+
+  it('закрывает соединение при user-left', async () => {
+    const { result } = renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    await act(async () => {
+      await result.current.createPeerConnection('peer-1', false);
+    });
+
+    const onUserLeft = getHandler('user-left');
+
+    act(() => {
+      onUserLeft({ socketId: 'peer-1' });
+    });
+
+    expect(mockPeerConnection.close).toHaveBeenCalled();
+    expect(onPeerLeft).toHaveBeenCalledWith('peer-1');
+  });
+
+  it('буферизует ICE-кандидаты до установки remoteDescription', async () => {
+    renderHook(() =>
+      useWebRTC({
+        socket: mockSocket,
+        localStream: mockLocalStream,
+        onRemoteStream,
+        onPeerLeft
+      })
+    );
+
+    const onIce = getHandler('ice-candidate');
+
+    // Кандидат приходит раньше, чем создан PC → буферизуется, не падает
+    await act(async () => {
+      await onIce({ fromSocketId: 'peer-1', candidate: { candidate: 'c1' } });
+    });
+
+    expect(mockPeerConnection.addIceCandidate).not.toHaveBeenCalled();
   });
 });

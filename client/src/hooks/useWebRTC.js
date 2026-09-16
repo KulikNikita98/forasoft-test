@@ -8,7 +8,11 @@ const ICE_SERVERS = [
 
 /**
  * useWebRTC — управление RTCPeerConnection для mesh-топологии.
- * Создает P2P соединение с каждым участником комнаты.
+ *
+ * Правило против glare (Design 7): участник, который ТОЛЬКО ЧТО вошёл, создаёт
+ * offer для каждого уже присутствующего (initiator). Существующие участники
+ * лишь отвечают (answer) на входящий offer — PC для них создаётся лениво при
+ * получении offer, поэтому соединения между старыми участниками не пересоздаются.
  *
  * @param {object} params
  * @param {import('socket.io-client').Socket} params.socket
@@ -26,20 +30,29 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
   const peersRef = useRef(new Map());
   const [peers, setPeers] = useState(new Map());
 
-  const createPeerConnection = async (socketId, isInitiator) => {
-    if (!socket || !localStream) return;
+  // Актуальный localStream доступен внутри колбэков без пересоздания слушателей
+  const localStreamRef = useRef(localStream);
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
-    // Создаем RTCPeerConnection с STUN конфигурацией
+  // ICE-кандидаты, пришедшие до установки remoteDescription, буферизуются
+  const pendingCandidatesRef = useRef(new Map());
+
+  // Существующие участники, которым нужно отправить offer, как только медиа готово
+  const pendingInitiatorsRef = useRef([]);
+
+  // Создать и настроить RTCPeerConnection (общая часть для initiator и answerer)
+  const setupPeerConnection = (socketId) => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peersRef.current.set(socketId, pc);
     setPeers(new Map(peersRef.current));
 
-    // Добавляем локальные треки в соединение
-    localStream.getTracks().forEach(track => {
-      pc.addTrack(track, localStream);
-    });
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    }
 
-    // Обработка входящих remote треков
     pc.ontrack = (event) => {
       const [remoteStream] = event.streams;
       if (remoteStream && onRemoteStream) {
@@ -47,7 +60,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
       }
     };
 
-    // Отправка ICE candidates через Socket.io
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit('ice-candidate', {
@@ -57,22 +69,28 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
       }
     };
 
-    // Мониторинг состояния соединения
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         closePeerConnection(socketId);
       }
     };
 
-    // Если мы инициатор — создаем и отправляем offer
+    return pc;
+  };
+
+  const createPeerConnection = async (socketId, isInitiator) => {
+    if (!socket) return;
+
+    let pc = peersRef.current.get(socketId);
+    if (!pc) {
+      pc = setupPeerConnection(socketId);
+    }
+
     if (isInitiator) {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('offer', {
-          targetSocketId: socketId,
-          sdp: offer
-        });
+        socket.emit('offer', { targetSocketId: socketId, sdp: offer });
       } catch (err) {
         console.error('Error creating offer:', err);
         closePeerConnection(socketId);
@@ -80,18 +98,34 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     }
   };
 
+  // Применить буферизованные ICE-кандидаты после установки remoteDescription
+  const flushPendingCandidates = async (socketId, pc) => {
+    const pending = pendingCandidatesRef.current.get(socketId);
+    if (!pending) return;
+
+    for (const candidate of pending) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('Error adding buffered ICE candidate:', err);
+      }
+    }
+    pendingCandidatesRef.current.delete(socketId);
+  };
+
   const handleOffer = async (fromSocketId, sdp) => {
-    const pc = peersRef.current.get(fromSocketId);
-    if (!pc) return;
+    // PC создаётся лениво — существующий участник отвечает новичку
+    let pc = peersRef.current.get(fromSocketId);
+    if (!pc) {
+      pc = setupPeerConnection(fromSocketId);
+    }
 
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await flushPendingCandidates(fromSocketId, pc);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket.emit('answer', {
-        targetSocketId: fromSocketId,
-        sdp: answer
-      });
+      socket.emit('answer', { targetSocketId: fromSocketId, sdp: answer });
     } catch (err) {
       console.error('Error handling offer:', err);
     }
@@ -103,6 +137,7 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
 
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await flushPendingCandidates(fromSocketId, pc);
     } catch (err) {
       console.error('Error handling answer:', err);
     }
@@ -110,7 +145,14 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
 
   const handleIceCandidate = async (fromSocketId, candidate) => {
     const pc = peersRef.current.get(fromSocketId);
-    if (!pc) return;
+
+    // Кандидат пришёл раньше remoteDescription — буферизуем
+    if (!pc || !pc.remoteDescription) {
+      const list = pendingCandidatesRef.current.get(fromSocketId) || [];
+      list.push(candidate);
+      pendingCandidatesRef.current.set(fromSocketId, list);
+      return;
+    }
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -124,6 +166,7 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     if (pc) {
       pc.close();
       peersRef.current.delete(socketId);
+      pendingCandidatesRef.current.delete(socketId);
       setPeers(new Map(peersRef.current));
 
       if (onPeerLeft) {
@@ -137,33 +180,71 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
       pc.close();
     });
     peersRef.current.clear();
+    pendingCandidatesRef.current.clear();
     setPeers(new Map());
   };
 
-  // Слушаем WebRTC signaling события от сервера
+  // Отправить offer всем ожидающим существующим участникам (когда медиа готово)
+  const initiatePendingConnections = () => {
+    if (!localStreamRef.current || pendingInitiatorsRef.current.length === 0) return;
+
+    const targets = pendingInitiatorsRef.current;
+    pendingInitiatorsRef.current = [];
+    targets.forEach((socketId) => {
+      createPeerConnection(socketId, true);
+    });
+  };
+
+  // Как только локальный поток появился — инициируем отложенные соединения
+  useEffect(() => {
+    if (localStream) {
+      initiatePendingConnections();
+    }
+  }, [localStream]);
+
+  // WebRTC signaling: offer / answer / ice-candidate
   useEffect(() => {
     if (!socket) return undefined;
 
-    socket.on('offer', ({ from, sdp }) => {
-      handleOffer(from, sdp);
-    });
+    const onOffer = ({ from, sdp }) => handleOffer(from, sdp);
+    const onAnswer = ({ from, sdp }) => handleAnswer(from, sdp);
+    const onIce = ({ fromSocketId, candidate }) => handleIceCandidate(fromSocketId, candidate);
 
-    socket.on('answer', ({ from, sdp }) => {
-      handleAnswer(from, sdp);
-    });
-
-    socket.on('ice-candidate', ({ fromSocketId, candidate }) => {
-      handleIceCandidate(fromSocketId, candidate);
-    });
+    socket.on('offer', onOffer);
+    socket.on('answer', onAnswer);
+    socket.on('ice-candidate', onIce);
 
     return () => {
-      socket.off('offer');
-      socket.off('answer');
-      socket.off('ice-candidate');
+      socket.off('offer', onOffer);
+      socket.off('answer', onAnswer);
+      socket.off('ice-candidate', onIce);
     };
   }, [socket]);
 
-  // Очистка при размонтировании
+  // Координация: вход в комнату (initiator к существующим) и выход участников
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const onRoomJoined = ({ participants = [] }) => {
+      // Мы новичок — инициируем offer к каждому уже присутствующему участнику
+      pendingInitiatorsRef.current = participants.map((p) => p.socketId);
+      initiatePendingConnections();
+    };
+
+    const onUserLeft = ({ socketId }) => {
+      closePeerConnection(socketId);
+    };
+
+    socket.on('room-joined', onRoomJoined);
+    socket.on('user-left', onUserLeft);
+
+    return () => {
+      socket.off('room-joined', onRoomJoined);
+      socket.off('user-left', onUserLeft);
+    };
+  }, [socket]);
+
+  // Очистка всех соединений при размонтировании
   useEffect(() => {
     return () => {
       closeAllConnections();

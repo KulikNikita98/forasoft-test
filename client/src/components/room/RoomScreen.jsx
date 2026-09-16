@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket.js';
 import { useMedia } from '../../hooks/useMedia.js';
+import { useWebRTC } from '../../hooks/useWebRTC.js';
 import NamePrompt from './NamePrompt.jsx';
 import RoomError from './RoomError.jsx';
 import InviteButton from './InviteButton.jsx';
@@ -51,6 +52,25 @@ function RoomScreen() {
 
   // Разблокировка remote audio (autoplay policy). Показываем оверлей, пока есть удалённые участники.
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  // Удалённые потоки: Map<socketId, MediaStream>
+  const [remoteStreams, setRemoteStreams] = useState(new Map());
+
+  // WebRTC: создание P2P соединений с участниками
+  useWebRTC({
+    socket,
+    localStream,
+    onRemoteStream: (socketId, stream) => {
+      setRemoteStreams((prev) => new Map(prev).set(socketId, stream));
+    },
+    onPeerLeft: (socketId) => {
+      setRemoteStreams((prev) => {
+        const next = new Map(prev);
+        next.delete(socketId);
+        return next;
+      });
+    }
+  });
 
   // Запуск локального потока при успешном подключении
   useEffect(() => {
@@ -174,6 +194,7 @@ function RoomScreen() {
               localUserName={userName}
               isLocalMuted={!isAudioEnabled}
               isLocalVideoOff={!isVideoEnabled}
+              remoteStreams={remoteStreams}
             />
           )}
 

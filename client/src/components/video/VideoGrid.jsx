@@ -5,18 +5,20 @@ import VideoTile from './VideoTile.jsx';
  * Динамическая раскладка: 1×1, 1×2, 2×2.
  *
  * @param {object} props
- * @param {Array<{socketId, userName, stream, isMuted, isVideoOff}>} props.participants
+ * @param {Array<{socketId, userName}>} props.participants — список участников
  * @param {MediaStream | null} props.localStream
  * @param {string} props.localUserName
  * @param {boolean} props.isLocalMuted
  * @param {boolean} props.isLocalVideoOff
+ * @param {Map<string, MediaStream>} [props.remoteStreams] — удалённые потоки по socketId
  */
 function VideoGrid({
   participants = [],
   localStream = null,
   localUserName = '',
   isLocalMuted = false,
-  isLocalVideoOff = false
+  isLocalVideoOff = false,
+  remoteStreams = new Map()
 }) {
   const totalCount = participants.length + 1; // +1 для локального участника
 
@@ -41,11 +43,11 @@ function VideoGrid({
         isLocal={true}
       />
 
-      {/* Удаленные участники */}
+      {/* Удалённые участники */}
       {participants.map((participant) => (
         <VideoTile
           key={participant.socketId}
-          stream={participant.stream || null}
+          stream={remoteStreams.get(participant.socketId) || null}
           userName={participant.userName}
           isMuted={participant.isMuted || false}
           isVideoOff={participant.isVideoOff || false}
