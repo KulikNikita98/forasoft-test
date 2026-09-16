@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.0 |
+| **Version** | 2.1 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
-| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.0 |
+| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.3 |
 
 ### История версий
 
@@ -14,6 +14,7 @@
 |--------|------|-----------|
 | 1.0 | 2026-09-15 | Первоначальный план: слоистая архитектура backend, Socket.io `join-room` |
 | 2.0 | 2026-09-16 | Переработка backend-задач (1–6, 10–11, 21–22) под **MVC + сервисный слой** и REST API; вход в комнату через query при WebSocket-подключении; уточнены соглашения по тестам (зеркалирование слоёв `src/`) |
+| 2.1 | 2026-09-16 | Frontend задачи 13-14: замена `MediaManager`/`PeerConnectionManager` классов на React hooks `useMedia`/`useWebRTC`; основано на TDD v2.3 |
 
 > Каждая задача рассчитана на ≤ 1 рабочий день и оформляется одним MR/PR.
 > `_Requirements_` ссылается на нумерованные требования PRD раздел 4 (F-XX или № пункта); `_Design_` — на разделы TDD (1–14).
@@ -147,7 +148,7 @@
   - 10.3. Обработка события `room-joined` (участники, история чата) и `error` (validation/room-full)
   - _Requirements: п.35, Design: 4, 6, 8 (недоступность сервера)_
 
-- [x] 11. **RoomScreen layout**
+- [ ] 11. **RoomScreen layout**
   - Основной экран комнаты, координация дочерних компонентов и состояния
   - После задач 9, 10
   - 11.1. Layout: видеосетка + панель управления + чат/список участников
@@ -167,24 +168,29 @@
   - 12.5. Оптимизация `React.memo` для VideoTile
   - _Requirements: F-07, F-08, п.16, п.18, NFR-PERF, NFR-UX, Design: 4, 9 (React.memo)_
 
-- [ ] 13. **MediaManager**
-  - Управление локальными медиа-устройствами (getUserMedia, toggle)
+- [x] 13. **useMedia hook (MediaManager)**
+  - React hook для управления локальными медиа-устройствами
   - После задачи 8
-  - 13.1. Класс `MediaManager`: `getUserMedia(constraints)` с default 720p @ 30fps
-  - 13.2. `toggleAudio(enabled)` — `track.enabled`
-  - 13.3. `toggleVideo(enabled)` — `track.enabled = false/true`; track НЕ останавливается (stop ломает RTCPeerConnection и удалённый `ontrack`). Если нужно освободить устройство — вынести в отдельную задачу с `sender.replaceTrack()`
-  - 13.4. Вход без физических устройств — присоединение с выключенными устройствами
-  - _Requirements: F-06, F-09, F-10, п.13, п.14, п.19, Design: 4 (MediaManager), 7, 9_
+  - 13.1. `useMedia({ autoStart?: boolean })` — hook с getUserMedia, constraints: 720p @ 30fps
+  - 13.2. `toggleAudio(enabled?)` — переключение `track.enabled` без остановки трека
+  - 13.3. `toggleVideo(enabled?)` — переключение `track.enabled` без остановки трека (не вызывать `track.stop()` — это ломает RTCPeerConnection и удалённый `ontrack`)
+  - 13.4. Состояние: `localStream`, `isAudioEnabled`, `isVideoEnabled`, `error`
+  - 13.5. Обработка ошибок getUserMedia: `NotAllowedError`, `NotFoundError`, `NotReadableError`
+  - 13.6. Автоматическая очистка (`stopMedia()`) при unmount компонента
+  - _Requirements: F-06, F-09, F-10, п.13, п.14, п.19, Design: 4 (useMedia), 7, 9_
 
-- [ ] 14. **PeerConnectionManager**
-  - Управление RTCPeerConnection для каждого участника
+- [ ] 14. **useWebRTC hook (PeerConnectionManager)**
+  - React hook для управления RTCPeerConnection в mesh-топологии
   - После задачи 13
-  - 14.1. Класс `PeerConnectionManager`: `createPeerConnection(socketId, isInitiator)` с STUN конфигом
-  - 14.2. `createOffer` / `handleOffer` / `handleAnswer` — SDP обмен. Условие: если `isInitiator === true` — `createOffer` сразу; если `false` — ждать входящий offer через `handleOffer`
-  - 14.3. `handleIceCandidate` — добавление ICE candidates
-  - 14.4. `addTrack` локального stream, обработка `ontrack` для remote stream
-  - 14.5. `closePeerConnection` / `closeAllConnections` — очистка при выходе
-  - _Requirements: F-06, Design: 4 (PeerConnectionManager), 7_
+  - 14.1. `useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft })` — hook с автоматической подпиской на Socket.io signaling
+  - 14.2. `createPeerConnection(socketId, isInitiator)` — создание RTCPeerConnection с Google STUN
+  - 14.3. Если `isInitiator === true` — автоматически создать и отправить offer; если `false` — ждать входящий offer
+  - 14.4. Обработка signaling событий: `offer`, `answer`, `ice-candidate` (автоматически через `socket.on`)
+  - 14.5. `addTrack` локального stream, обработка `ontrack` для remote streams
+  - 14.6. Состояние: `peers: Map<socketId, RTCPeerConnection>`
+  - 14.7. `closePeerConnection(socketId)` / `closeAllConnections()` — очистка при выходе
+  - 14.8. Автоматическая очистка всех peer connections при unmount компонента
+  - _Requirements: F-06, Design: 4 (useWebRTC), 7_
 
 - [ ] 15. **Controls компонент**
   - Панель управления: микрофон, камера, выход

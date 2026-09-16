@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 2.2 |
+| **Version** | 2.3 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
@@ -16,6 +16,7 @@
 | 2.0 | 2026-09-16 | Переход на **MVC + сервисный слой**; добавлен REST API (Express) для управления комнатами; вход в комнату через `handshake.query` при WebSocket-подключении вместо события `join-room`; единый объект конфигурации; структура тестов зеркалит слои `src/` |
 | 2.1 | 2026-09-16 | После code review: (1) `Room.tryAddParticipant()` — атомарная проверка лимита 4 участников; (2) WebRTC signaling: проверка `targetSocketId` в той же комнате перед relay (требование 6.4); (3) TTL-очистка пустых комнат (защита от утечки памяти); (4) `roomId` генерируется через `crypto.randomUUID()` (UUID v4); (5) интеграционный тест REST→WebSocket |
 | 2.2 | 2026-09-16 | Решения по frontend: структура `components/hooks/services/utils`, **Tailwind CSS** для стилей, полное тестирование (Vitest + React Testing Library для компонентов + E2E Playwright); `services/api.js` — REST-клиент |
+| 2.3 | 2026-09-16 | Frontend WebRTC: замена классов `MediaManager`/`PeerConnectionManager` на React hooks `useMedia`/`useWebRTC` для лучшей интеграции с компонентами и автоматической очистки ресурсов |
 
 ---
 
@@ -194,33 +195,45 @@ Upload bandwidth на клиента: ~4.5 Mbps (при 720p, ~1.5 Mbps/пото
 
 #### Core Modules
 
-**`MediaManager`**
-- **Ответственность:** управление локальными медиа-устройствами
+**`useMedia` (hook)**
+- **Ответственность:** управление локальными медиа-устройствами через React hook
 - **API:**
   ```javascript
-  class MediaManager {
-    async getUserMedia(constraints)
-    toggleAudio(enabled: boolean)
-    toggleVideo(enabled: boolean)
-    getLocalStream(): MediaStream
-    stopTracks()
+  function useMedia({ autoStart?: boolean }) {
+    return {
+      localStream: MediaStream | null,
+      isAudioEnabled: boolean,
+      isVideoEnabled: boolean,
+      error: string | null,
+      startMedia: () => Promise<void>,
+      stopMedia: () => void,
+      toggleAudio: (enabled?: boolean) => void,
+      toggleVideo: (enabled?: boolean) => void
+    }
   }
   ```
+- **Преимущества hook-подхода:** автоматическая очистка при unmount, интеграция с React lifecycle, состояние синхронизировано с UI
 
-**`PeerConnectionManager`**
-- **Ответственность:** управление RTCPeerConnection для каждого peer
+**`useWebRTC` (hook)**
+- **Ответственность:** управление RTCPeerConnection для mesh-топологии через React hook
 - **API:**
   ```javascript
-  class PeerConnectionManager {
-    createPeerConnection(socketId: string, isInitiator: boolean): RTCPeerConnection
-    createOffer(socketId: string): Promise<RTCSessionDescriptionInit>
-    handleOffer(socketId: string, sdp): Promise<RTCSessionDescriptionInit>
-    handleAnswer(socketId: string, sdp)
-    handleIceCandidate(socketId: string, candidate)
-    closePeerConnection(socketId: string)
-    closeAllConnections()
+  function useWebRTC({
+    socket: Socket,
+    localStream: MediaStream,
+    onRemoteStream: (socketId, stream) => void,
+    onPeerLeft: (socketId) => void
+  }) {
+    return {
+      peers: Map<string, RTCPeerConnection>,
+      createPeerConnection: (socketId: string, isInitiator: boolean) => Promise<void>,
+      closePeerConnection: (socketId: string) => void,
+      closeAllConnections: () => void
+    }
   }
   ```
+- **Обработка signaling:** hook автоматически подписывается на Socket.io события (`offer`, `answer`, `ice-candidate`) и управляет их обработкой
+- **Автоматическая очистка:** все peer connections закрываются при unmount компонента
 
 ### Backend Modules (MVC + сервисный слой)
 
