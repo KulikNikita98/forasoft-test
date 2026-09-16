@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.2 |
+| **Version** | 2.3 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
-| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.4 |
+| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.5 |
 
 ### История версий
 
@@ -16,6 +16,7 @@
 | 2.0 | 2026-09-16 | Переработка backend-задач (1–6, 10–11, 21–22) под **MVC + сервисный слой** и REST API; вход в комнату через query при WebSocket-подключении; уточнены соглашения по тестам (зеркалирование слоёв `src/`) |
 | 2.1 | 2026-09-16 | Frontend задачи 13-14: замена `MediaManager`/`PeerConnectionManager` классов на React hooks `useMedia`/`useWebRTC`; основано на TDD v2.3 |
 | 2.2 | 2026-09-16 | Удалены задачи E2E тесты (23), мануальное тестирование WebRTC (24), демо-видео (29); задача 27 актуализирована (убрана PM2); итого 27 задач; основано на TDD v2.4 |
+| 2.3 | 2026-09-16 | Добавлена задача 23 «Тесты Frontend (компоненты + хуки)» (Vitest + React Testing Library); итого 28 задач |
 
 > Каждая задача рассчитана на ≤ 1 рабочий день и оформляется одним MR/PR.
 > `_Requirements_` ссылается на нумерованные требования PRD раздел 4 (F-XX или № пункта); `_Design_` — на разделы TDD (1–14).
@@ -271,6 +272,15 @@
   - 22.5. Проверка обработки `disconnect` (broadcast user-left, удаление комнаты)
   - _Requirements: F-05, F-12, F-16, F-17, F-18, п.9, Design: 11 (Integration tests)_
 
+- [x] 23. **Тесты Frontend (компоненты + хуки)**
+  - Покрыть тестами клиентские компоненты и React-хуки (Vitest + React Testing Library)
+  - После задач 9–20
+  - 23.1. Компоненты: common (Button, Input, Card), room (StartScreen, RoomScreen, NamePrompt, RoomError, InviteButton, MediaErrorBanner, AudioUnlockOverlay, ConnectionStatusBanner), video (VideoGrid, VideoTile), controls (Controls), chat (Chat, ChatMessage, ChatInput), participant (Participant, ParticipantList)
+  - 23.2. Хуки: `useMedia` (getUserMedia, toggle, потеря устройства onended), `useWebRTC` (создание PC, glare rule, ICE-состояния, буферизация кандидатов), роутинг App
+  - 23.3. Соглашение по тестам: файлы в `client/tests/` БЕЗ суффикса `.test.` в имени; структура зеркалит `src/` (например, `src/components/video/VideoTile.jsx` → `tests/components/video/VideoTile.jsx`, `src/hooks/useMedia.js` → `tests/hooks/useMedia.jsx`). `vitest.config.js` с jsdom-окружением
+  - 23.4. Мокирование браузерных API: `getUserMedia`, `RTCPeerConnection`, `MediaStreamTrack`, `scrollIntoView`
+  - _Requirements: F-01, F-03, F-07, F-08, F-09, F-10, F-12, F-13, F-14, F-17, п.16, п.18, п.24, NFR-SEC, Design: 11 (Frontend tests)_
+
 ---
 
 ## DevOps / Инфраструктура
@@ -316,6 +326,6 @@
 
 **Итого: 28 задач** (Репозиторий: 1, Backend: 7, Frontend: 10, WebRTC: 3, Тесты: 3, DevOps: 3, Документация: 1)
 
-**Критический путь:** 0 (git) → (25 HTTPS ‖ 1 server ‖ 8 client) → 2/3 → 4 → 5/6/7 (Backend) ‖ 10/13 → 11/14 → 12/15/16/17 (Frontend) → 18 → 19/20 (WebRTC integration) → 21/22/23 (Tests) → 27 (build) → 28 (Docs)
+**Критический путь:** 0 (git) → (25 HTTPS ‖ 1 server ‖ 8 client) → 2/3 → 4 → 5/6/7 (Backend) ‖ 10/13 → 11/14 → 12/15/16/17 (Frontend) → 18 → 19/20 (WebRTC integration) → 21/22 (Backend tests) ‖ 23 (Frontend tests) → 27 (build) → 28 (Docs)
 
 > Примечание: задача 25 (HTTPS-сертификаты) выполняется параллельно с 1 и 8, но задача 1.3 (HTTPS-сервер) зависит от 25 — сертификаты должны существовать до запуска HTTPS-сервера.

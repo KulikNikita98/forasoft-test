@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 2.4 |
+| **Version** | 2.5 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
@@ -15,9 +15,10 @@
 | 1.0 | 2026-09-15 | Первоначальная версия: слоистая архитектура, Socket.io `join-room` с acknowledgement |
 | 2.0 | 2026-09-16 | Переход на **MVC + сервисный слой**; добавлен REST API (Express) для управления комнатами; вход в комнату через `handshake.query` при WebSocket-подключении вместо события `join-room`; единый объект конфигурации; структура тестов зеркалит слои `src/` |
 | 2.1 | 2026-09-16 | После code review: (1) `Room.tryAddParticipant()` — атомарная проверка лимита 4 участников; (2) WebRTC signaling: проверка `targetSocketId` в той же комнате перед relay (требование 6.4); (3) TTL-очистка пустых комнат (защита от утечки памяти); (4) `roomId` генерируется через `crypto.randomUUID()` (UUID v4); (5) интеграционный тест REST→WebSocket |
-| 2.2 | 2026-09-16 | Решения по frontend: структура `components/hooks/services/utils`, **Tailwind CSS** для стилей, полное тестирование (Vitest + React Testing Library для компонентов + E2E Playwright); `services/api.js` — REST-клиент |
+| 2.2 | 2026-09-16 | Решения по frontend: структура `components/hooks/services/utils`, **Tailwind CSS** для стилей, тестирование Vitest + React Testing Library для компонентов и хуков; `services/api.js` — REST-клиент |
 | 2.3 | 2026-09-16 | Frontend WebRTC: замена классов `MediaManager`/`PeerConnectionManager` на React hooks `useMedia`/`useWebRTC` для лучшей интеграции с компонентами и автоматической очистки ресурсов |
 | 2.4 | 2026-09-16 | Упрощение раздела деплоя: убраны HTTPS setup (Let's Encrypt), CI/CD pipeline и PM2/Docker; актуализированы build/run скрипты (`npm run serve`, `start:prod`, production-раздача `client/dist` + SPA-fallback) |
+| 2.5 | 2026-09-16 | Раздел тестирования (11): убраны E2E (Playwright) и ручная тест-матрица WebRTC как отдельные секции; добавлена секция Frontend Tests (компоненты + хуки, Vitest + RTL), отражающая фактическую реализацию |
 
 ---
 
@@ -1120,47 +1121,53 @@ describe('Integration: REST create → WebSocket join', () => {
 
 **Tools:** Vitest + socket.io-client
 
-### E2E Tests
+### Frontend Tests (компоненты + хуки)
 
-**Scenarios:**
+**Компоненты (React Testing Library):**
 ```javascript
-describe('E2E User Flows', () => {
-  test('создание комнаты, копирование ссылки')
-  test('вход по ссылке-приглашению')
-  test('отображение видео всех участников')
-  test('отправка и получение сообщений в чате')
-  test('включение/выключение микрофона')
-  test('включение/выключение камеры')
-  test('выход из комнаты')
-  test('закрытие вкладки = выход')
-  test('экран "Комната заполнена" при 5-м участнике')
+describe('common', () => {
+  test('Button: варианты, disabled, onClick')
+  test('Input: label, error, value/onChange')
+  test('Card: рендер children')
+})
+describe('video', () => {
+  test('VideoTile: video-элемент / placeholder при isVideoOff, индикаторы mic')
+  test('VideoGrid: адаптивная сетка 1–4, привязка remoteStreams по socketId')
+})
+describe('chat', () => {
+  test('Chat: история сообщений, автопрокрутка, пустое состояние')
+  test('ChatMessage: user/system, время HH:MM, XSS-экранирование')
+  test('ChatInput: отправка Enter/кнопкой, блокировка пустых')
+})
+describe('controls / participant / room', () => {
+  test('Controls: toggle mic/camera, кнопка выхода, индикация состояния')
+  test('ParticipantList / Participant: список, индикаторы mic/video')
+  test('MediaErrorBanner / AudioUnlockOverlay / ConnectionStatusBanner')
 })
 ```
 
-**Tools:** Playwright или Puppeteer
+**Хуки:**
+```javascript
+describe('useMedia', () => {
+  test('getUserMedia с constraints 720p@30fps')
+  test('toggleAudio / toggleVideo (track.enabled)')
+  test('обработка ошибок NotAllowedError / NotFoundError')
+  test('track.onended → выключение контрола + onDeviceLost')
+})
+describe('useWebRTC', () => {
+  test('createPeerConnection: initiator создаёт offer, answerer — нет')
+  test('glare rule: room-joined → offer каждому существующему')
+  test('ICE states: failed → закрытие, disconnected → 5с таймер')
+  test('буферизация ICE-кандидатов до remoteDescription')
+})
+describe('App routing', () => {
+  test('StartScreen / RoomScreen по маршрутам, UnsupportedBrowser без WebRTC')
+})
+```
 
-**Environment:** headless Chrome с fake media devices
+**Tools:** Vitest + React Testing Library (jsdom). Файлы в `client/tests/` зеркалят `src/`, без суффикса `.test.`. Мокируются браузерные API: `getUserMedia`, `RTCPeerConnection`, `MediaStreamTrack`, `scrollIntoView`
 
-### WebRTC Testing
-
-**Manual testing matrix:**
-
-| Browser | Version | Video | Audio | ICE | Notes |
-|---------|---------|-------|-------|-----|-------|
-| Chrome | 100+ | ✓ | ✓ | ✓ | Baseline |
-| Firefox | 100+ | ✓ | ✓ | ✓ | Check codec support |
-| Edge | 100+ | ✓ | ✓ | ✓ | Chromium-based |
-
-**NAT scenarios:**
-- Same local network (direct P2P)
-- Different networks (via STUN)
-- Symmetric NAT (может не работать без TURN — приемлемо)
-
-**Media devices:**
-- С камерой и микрофоном
-- Без камеры (только микрофон)
-- Без микрофона (только камера)
-- Без обоих (аватар + отключенный микрофон)
+**Ручная проверка WebRTC (не автоматизировано):** визуальная проверка видео/аудио в Chrome/Firefox/Edge 100+; сценарии — одна локальная сеть (direct P2P), разные сети (STUN), вход без камеры/микрофона (аватар + отключённый микрофон).
 
 ### Load Testing
 
