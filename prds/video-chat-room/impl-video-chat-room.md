@@ -223,7 +223,7 @@
 ## Интеграция WebRTC
 
 - [ ] 18. **WebRTC handshake flow (координация)**
-  - Связать сигналинг сервера с PeerConnectionManager по правилу против glare
+  - Связать сигналинг сервера с useWebRTC по правилу против glare
   - После задач 6, 14
   - 18.1. При входе новый участник создаёт offer для КАЖДОГО существующего (initiator)
   - 18.2. Существующие участники ТОЛЬКО отвечают (answer) — правило против glare
@@ -313,7 +313,7 @@
   - После задач 1, 8, 26
   - 27.1. `npm run build` в client → статика в `client/dist`
   - 27.2. Сервер раздаёт статику + WebSocket endpoint
-  - 27.3. PM2 ecosystem.config.js или Dockerfile
+  - 27.3. PM2 ecosystem.config.js для production-запуска
   - _Requirements: NFR-COMPAT, Design: 12 (deployment)_
 
 ---

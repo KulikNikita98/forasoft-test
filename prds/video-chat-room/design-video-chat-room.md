@@ -1178,27 +1178,28 @@ describe('E2E User Flows', () => {
 video-chat-room/
 ├── client/                    # React frontend
 │   ├── public/
-│   │   ├── index.html
 │   │   └── favicon.ico
 │   ├── src/
-│   │   ├── components/          # UI-компоненты
-│   │   │   ├── StartScreen.jsx
-│   │   │   ├── RoomScreen.jsx
-│   │   │   ├── VideoGrid.jsx
-│   │   │   ├── VideoTile.jsx
-│   │   │   ├── Controls.jsx
-│   │   │   ├── Chat.jsx
-│   │   │   └── ParticipantList.jsx
-│   │   ├── hooks/              # React-хуки
-│   │   │   ├── useMediaManager.js
-│   │   │   ├── usePeerConnection.js
-│   │   │   └── useSocket.js
-│   │   ├── services/          # Классы-сервисы (side-effect логика)
-│   │   │   ├── MediaManager.js
-│   │   │   ├── PeerConnectionManager.js
+│   │   ├── components/          # UI-компоненты (сгруппированы по домену)
+│   │   │   ├── common/         # Переиспользуемые: Button, Input, Card
+│   │   │   ├── room/           # StartScreen, RoomScreen, NamePrompt, RoomError,
+│   │   │   │                   # InviteButton, UnsupportedBrowser, MediaErrorBanner,
+│   │   │   │                   # AudioUnlockOverlay
+│   │   │   ├── video/          # VideoGrid, VideoTile
+│   │   │   ├── controls/       # Controls
+│   │   │   ├── chat/           # Chat, ChatMessage, ChatInput
+│   │   │   └── participant/    # Participant, ParticipantList
+│   │   ├── hooks/              # React-хуки (side-effect логика)
+│   │   │   ├── useMedia.js     # Локальные медиа-устройства (getUserMedia, toggle)
+│   │   │   ├── useWebRTC.js    # RTCPeerConnection, mesh-топология, signaling
+│   │   │   └── useSocket.js    # Socket.io подключение к комнате
+│   │   ├── services/          # Внешние интеграции
 │   │   │   └── api.js          # REST-клиент (POST /api/rooms и т.д.)
 │   │   ├── utils/             # Чистые утилиты
-│   │   │   └── validation.js
+│   │   │   ├── validation.js
+│   │   │   └── webrtcSupport.js
+│   │   ├── config/            # Конфигурация из import.meta.env
+│   │   │   └── index.js
 │   │   ├── App.jsx
 │   │   ├── main.jsx
 │   │   └── index.css          # Tailwind-директивы
@@ -1367,7 +1368,16 @@ jobs:
 
 ### Deployment Options
 
-**Option 1: PM2**
+**Локальный запуск (основной сценарий):**
+```bash
+# 1. Сборка клиента
+cd client && npm run build   # → client/dist
+
+# 2. Запуск сервера (раздаёт client/dist + WebSocket endpoint)
+cd server && npm start
+```
+
+**Production (PM2):**
 ```bash
 # server/ecosystem.config.js
 module.exports = {
@@ -1385,21 +1395,6 @@ module.exports = {
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
-```
-
-**Option 2: Docker**
-```dockerfile
-# Dockerfile
-FROM node:18
-WORKDIR /app
-COPY server/package*.json ./server/
-COPY client/package*.json ./client/
-RUN cd server && npm ci --only=production
-RUN cd client && npm ci && npm run build
-COPY server/ ./server/
-COPY client/dist/ ./client/dist/
-EXPOSE 3000
-CMD ["node", "server/src/server.js"]
 ```
 
 ### Feature Flags
@@ -1444,7 +1439,7 @@ CMD ["node", "server/src/server.js"]
 
 ### Logging
 **Вопрос:** Какая стратегия логирования на сервере?  
-**Решение:** Winston (`infrastructure/logger.js`), уровень из `.env` (LOG_LEVEL), вывод в stdout (для Docker)  
+**Решение:** Winston (`infrastructure/logger.js`), уровень из `.env` (LOG_LEVEL), вывод в stdout  
 **Статус:** ✅ реализовано
 
 ### Reconnection Timeout
