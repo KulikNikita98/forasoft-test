@@ -1,5 +1,5 @@
 /**
- * Форматирует timestamp в HH:MM по локальному времени клиента (F-13).
+ * Форматирует timestamp в HH:MM по локальному времени клиента.
  * @param {number} timestamp
  * @returns {string}
  */
@@ -12,18 +12,16 @@ function formatTime(timestamp) {
 
 /**
  * ChatMessage — одно сообщение в чате (пользовательское или системное).
- * Текст рендерится через React → авто-экранирование XSS (NFR-SEC, п.39).
  *
  * @param {object} props
  * @param {'user' | 'system'} props.type
- * @param {string} [props.fromName] — имя отправителя (для user)
- * @param {string} [props.message] — текст (для user)
- * @param {string} [props.text] — текст (для system)
+ * @param {string} [props.fromName]
+ * @param {string} [props.message]
+ * @param {string} [props.text]
  * @param {number} props.timestamp
- * @param {boolean} [props.isOwn] — сообщение текущего пользователя
+ * @param {boolean} [props.isOwn]
  */
 function ChatMessage({ type, fromName, message, text, timestamp, isOwn = false }) {
-  // Системное сообщение: по центру, приглушённое
   if (type === 'system') {
     return (
       <div className="py-1 text-center text-xs text-gray-500">
@@ -32,7 +30,6 @@ function ChatMessage({ type, fromName, message, text, timestamp, isOwn = false }
     );
   }
 
-  // Пользовательское сообщение
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-baseline gap-2">

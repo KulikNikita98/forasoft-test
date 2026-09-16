@@ -3,7 +3,6 @@ import config from '../../config/index.js';
 
 /**
  * ChatInput — поле ввода и отправки сообщения.
- * Блокирует отправку пустых/пробельных сообщений (п.24).
  *
  * @param {object} props
  * @param {(text: string) => void} props.onSend
@@ -13,7 +12,7 @@ function ChatInput({ onSend }) {
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed) return; // блокировка пустых сообщений
+    if (!trimmed) return;
     onSend(trimmed);
     setText('');
   };

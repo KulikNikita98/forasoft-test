@@ -6,14 +6,13 @@ import ChatInput from './ChatInput.jsx';
  * Chat — панель текстового чата с историей, отправкой и автопрокруткой.
  *
  * @param {object} props
- * @param {Array} props.messages — сообщения (user и system)
+ * @param {Array} props.messages
  * @param {(text: string) => void} props.onSend
- * @param {string} props.currentSocketId — socketId текущего пользователя (для пометки "Вы")
+ * @param {string} props.currentSocketId
  */
 function Chat({ messages = [], onSend, currentSocketId }) {
   const bottomRef = useRef(null);
 
-  // Автопрокрутка к последнему сообщению (F-14)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);

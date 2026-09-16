@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 
-// Google STUN серверы для NAT traversal
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
@@ -8,11 +7,6 @@ const ICE_SERVERS = [
 
 /**
  * useWebRTC — управление RTCPeerConnection для mesh-топологии.
- *
- * Правило против glare (Design 7): участник, который ТОЛЬКО ЧТО вошёл, создаёт
- * offer для каждого уже присутствующего (initiator). Существующие участники
- * лишь отвечают (answer) на входящий offer — PC для них создаётся лениво при
- * получении offer, поэтому соединения между старыми участниками не пересоздаются.
  *
  * @param {object} params
  * @param {import('socket.io-client').Socket} params.socket
@@ -30,19 +24,14 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
   const peersRef = useRef(new Map());
   const [peers, setPeers] = useState(new Map());
 
-  // Актуальный localStream доступен внутри колбэков без пересоздания слушателей
   const localStreamRef = useRef(localStream);
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
 
-  // ICE-кандидаты, пришедшие до установки remoteDescription, буферизуются
   const pendingCandidatesRef = useRef(new Map());
-
-  // Существующие участники, которым нужно отправить offer, как только медиа готово
   const pendingInitiatorsRef = useRef([]);
 
-  // Создать и настроить RTCPeerConnection (общая часть для initiator и answerer)
   const setupPeerConnection = (socketId) => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peersRef.current.set(socketId, pc);
@@ -98,7 +87,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     }
   };
 
-  // Применить буферизованные ICE-кандидаты после установки remoteDescription
   const flushPendingCandidates = async (socketId, pc) => {
     const pending = pendingCandidatesRef.current.get(socketId);
     if (!pending) return;
@@ -114,7 +102,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
   };
 
   const handleOffer = async (fromSocketId, sdp) => {
-    // PC создаётся лениво — существующий участник отвечает новичку
     let pc = peersRef.current.get(fromSocketId);
     if (!pc) {
       pc = setupPeerConnection(fromSocketId);
@@ -146,7 +133,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
   const handleIceCandidate = async (fromSocketId, candidate) => {
     const pc = peersRef.current.get(fromSocketId);
 
-    // Кандидат пришёл раньше remoteDescription — буферизуем
     if (!pc || !pc.remoteDescription) {
       const list = pendingCandidatesRef.current.get(fromSocketId) || [];
       list.push(candidate);
@@ -184,7 +170,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     setPeers(new Map());
   };
 
-  // Отправить offer всем ожидающим существующим участникам (когда медиа готово)
   const initiatePendingConnections = () => {
     if (!localStreamRef.current || pendingInitiatorsRef.current.length === 0) return;
 
@@ -195,14 +180,12 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     });
   };
 
-  // Как только локальный поток появился — инициируем отложенные соединения
   useEffect(() => {
     if (localStream) {
       initiatePendingConnections();
     }
   }, [localStream]);
 
-  // WebRTC signaling: offer / answer / ice-candidate
   useEffect(() => {
     if (!socket) return undefined;
 
@@ -221,12 +204,10 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     };
   }, [socket]);
 
-  // Координация: вход в комнату (initiator к существующим) и выход участников
   useEffect(() => {
     if (!socket) return undefined;
 
     const onRoomJoined = ({ participants = [] }) => {
-      // Мы новичок — инициируем offer к каждому уже присутствующему участнику
       pendingInitiatorsRef.current = participants.map((p) => p.socketId);
       initiatePendingConnections();
     };
@@ -244,7 +225,6 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft }) {
     };
   }, [socket]);
 
-  // Очистка всех соединений при размонтировании
   useEffect(() => {
     return () => {
       closeAllConnections();
