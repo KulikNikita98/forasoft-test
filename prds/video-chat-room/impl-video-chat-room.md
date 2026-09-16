@@ -254,11 +254,11 @@
 ## Тестирование
 
 - [x] 21. **Unit-тесты Backend (модели, сервис)**
-  - Покрыть тестами серверную логику, цель 80% coverage
+  - Покрыть тестами серверную логику
   - После задач 2, 3
   - 21.1. Models: `Room` (добавление/удаление участников, isFull/isEmpty, chat), `Participant` (mediaState, toJSON); `RoomService`: создание, вход, лимит 4 (отклонение 5-го), удаление комнаты
   - 21.2. Валидация покрывается косвенно через integration-тесты контроллеров; отдельные unit-тесты модуля `validation/` не пишем (решение по итогам ревью)
-  - 21.3. Настроить Vitest (нативная поддержка ESM), скрипт `npm test`, coverage report. Альтернатива: Jest с `--experimental-vm-modules` для ESM
+  - 21.3. Vitest (нативная поддержка ESM), скрипт `npm test`
   - 21.4. Соглашение по тестам: файлы располагаются в `server/tests/` БЕЗ суффикса `.test.` в имени; структура папки `tests/` зеркалит слои `src/` (например, `src/models/Room.js` → `tests/models/Room.js`, `src/services/RoomService.js` → `tests/services/RoomService.js`, `src/controllers/SocketController.js` → `tests/controllers/SocketController.js`). `vitest.config.js` настроен с `include: ['tests/**/*.js']`
   - _Requirements: F-05, п.8, п.9, п.24, п.38, Design: 11 (Unit tests)_
 
@@ -296,9 +296,9 @@
 - [x] 26. **Environment variables**
   - Вынести конфигурацию в .env файлы
   - После задач 1, 8
-  - 26.1. Server `.env`: PORT, NODE_ENV, SSL пути, PING_TIMEOUT/INTERVAL, LOG_LEVEL
-  - 26.2. Client `.env`: VITE_API_URL, VITE_STUN_SERVER, VITE_NODE_ENV
-  - 26.3. Создать `.env.example` для обоих + добавить в .gitignore
+  - 26.1. Server `.env`: PORT, NODE_ENV, LOG_LEVEL, SSL_CERT_PATH/SSL_KEY_PATH, PING_TIMEOUT/PING_INTERVAL, CORS_ORIGIN
+  - 26.2. Client `.env`: VITE_API_BASE_URL, VITE_WS_URL, VITE_STUN_SERVERS (список STUN через запятую), VITE_APP_TITLE, VITE_MAX_PARTICIPANTS, VITE_MAX_MESSAGE_LENGTH, VITE_MAX_USERNAME_LENGTH
+  - 26.3. Создать `.env.example` для обоих + добавить `.env` в `.gitignore`
   - _Requirements: NFR-SEC, Design: 12 (env vars)_
 
 - [x] 27. **Production build**

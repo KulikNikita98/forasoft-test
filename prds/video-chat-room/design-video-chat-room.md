@@ -1298,14 +1298,18 @@ LOG_LEVEL=info
 
 **Client (`.env`):**
 ```bash
-# API endpoint
-VITE_API_URL=https://localhost:3000
+# API endpoints
+VITE_API_BASE_URL=https://localhost:3000
+VITE_WS_URL=https://localhost:3000
 
-# STUN server
-VITE_STUN_SERVER=stun:stun.l.google.com:19302
+# WebRTC STUN servers (comma-separated)
+VITE_STUN_SERVERS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
 
-# Environment
-VITE_NODE_ENV=development
+# Application config
+VITE_APP_TITLE=Video Chat Room
+VITE_MAX_PARTICIPANTS=4
+VITE_MAX_MESSAGE_LENGTH=1000
+VITE_MAX_USERNAME_LENGTH=30
 ```
 
 ### Build & Deploy Steps

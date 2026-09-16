@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
-];
+import config from '../config/index.js';
 
 /**
  * useWebRTC — управление RTCPeerConnection для mesh-топологии.
@@ -35,7 +31,7 @@ export function useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft, onC
   const disconnectTimersRef = useRef(new Map());
 
   const setupPeerConnection = (socketId) => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers: config.webrtc.iceServers });
     peersRef.current.set(socketId, pc);
     setPeers(new Map(peersRef.current));
 
