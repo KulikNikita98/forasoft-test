@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 2.3 |
+| **Version** | 2.4 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
@@ -17,6 +17,7 @@
 | 2.1 | 2026-09-16 | После code review: (1) `Room.tryAddParticipant()` — атомарная проверка лимита 4 участников; (2) WebRTC signaling: проверка `targetSocketId` в той же комнате перед relay (требование 6.4); (3) TTL-очистка пустых комнат (защита от утечки памяти); (4) `roomId` генерируется через `crypto.randomUUID()` (UUID v4); (5) интеграционный тест REST→WebSocket |
 | 2.2 | 2026-09-16 | Решения по frontend: структура `components/hooks/services/utils`, **Tailwind CSS** для стилей, полное тестирование (Vitest + React Testing Library для компонентов + E2E Playwright); `services/api.js` — REST-клиент |
 | 2.3 | 2026-09-16 | Frontend WebRTC: замена классов `MediaManager`/`PeerConnectionManager` на React hooks `useMedia`/`useWebRTC` для лучшей интеграции с компонентами и автоматической очистки ресурсов |
+| 2.4 | 2026-09-16 | Упрощение раздела деплоя: убраны HTTPS setup (Let's Encrypt), CI/CD pipeline и PM2/Docker; актуализированы build/run скрипты (`npm run serve`, `start:prod`, production-раздача `client/dist` + SPA-fallback) |
 
 ---
 
@@ -1322,80 +1323,29 @@ cd client && npm run dev
 cd server && npm run dev
 ```
 
-**Production build:**
+**Production build & run:**
 ```bash
-# 1. Build frontend
-cd client
-npm run build
-# Output: client/dist/
+# Вариант 1: одной командой (сборка клиента + запуск сервера в production)
+cd server && npm run serve
 
-# 2. Server serves static files
-cd ../server
-# server.js:
-# app.use(express.static(path.join(__dirname, '../client/dist')))
+# Вариант 2: по шагам
+cd client && npm run build      # → client/dist
+cd ../server && npm run start:prod   # NODE_ENV=production, раздаёт client/dist
 
-# 3. Start server
-npm start
+# В production (NODE_ENV=production) сервер:
+# - раздаёт статику из client/dist (express.static)
+# - обслуживает SPA-fallback (/*splat → index.html)
+# - обслуживает REST API (/api) и WebSocket (Socket.io)
+# Всё доступно на https://localhost:3000
 ```
 
-**HTTPS setup (production):**
-```bash
-# Let's Encrypt
-sudo certbot certonly --standalone -d your-domain.com
-# Certificates: /etc/letsencrypt/live/your-domain.com/
-
-# Auto-renewal
-sudo certbot renew --dry-run
-```
-
-### CI/CD Pipeline
-
-**Minimal pipeline (GitHub Actions):**
-```yaml
-name: CI
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      - run: cd server && npm install && npm test
-      - run: cd client && npm install && npm run build
-```
-
-### Deployment Options
-
-**Локальный запуск (основной сценарий):**
-```bash
-# 1. Сборка клиента
-cd client && npm run build   # → client/dist
-
-# 2. Запуск сервера (раздаёт client/dist + WebSocket endpoint)
-cd server && npm start
-```
-
-**Production (PM2):**
-```bash
-# server/ecosystem.config.js
-module.exports = {
-  apps: [{
-    name: 'video-chat-server',
-    script: './src/server.js',
-    instances: 1,
-    env: {
-      NODE_ENV: 'production',
-      PORT: 3000
-    }
-  }]
-}
-
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
-```
+Скрипты сервера (`server/package.json`):
+- `npm start` — запуск из `src/server.js`
+- `npm run dev` — режим разработки с авто-перезагрузкой (`--watch`)
+- `npm run start:prod` — запуск с `NODE_ENV=production`
+- `npm run build` — сборка клиента (`client/dist`)
+- `npm run serve` — `build` + `start:prod` (полный production-запуск)
+- `npm test` — Vitest
 
 ### Feature Flags
 Не требуются для MVP (нет phased rollout).

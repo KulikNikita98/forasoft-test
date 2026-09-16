@@ -80,12 +80,17 @@ npm run dev
 ### Сборка и запуск
 
 ```bash
-# Из корня проекта или из server/
+# Из папки server/ — одной командой
 cd server
 npm run serve
 # → собирает клиент в client/dist и запускает сервер в production-режиме
 # Всё доступно на https://localhost:3000
 ```
+
+В production (`NODE_ENV=production`) сервер:
+- раздаёт собранную статику из `client/dist`
+- обслуживает SPA-fallback (любой маршрут → `index.html`)
+- обслуживает REST API (`/api`) и WebSocket (Socket.io)
 
 Скрипты сервера:
 - `npm start` — запуск сервера из `src/server.js`

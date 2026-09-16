@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.1 |
+| **Version** | 2.2 |
 | **Date** | 2026-09-16 |
 | **Status** | In Progress |
 | **Feature** | video-chat-room |
-| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.3 |
+| **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.4 |
 
 ### История версий
 
@@ -15,6 +15,7 @@
 | 1.0 | 2026-09-15 | Первоначальный план: слоистая архитектура backend, Socket.io `join-room` |
 | 2.0 | 2026-09-16 | Переработка backend-задач (1–6, 10–11, 21–22) под **MVC + сервисный слой** и REST API; вход в комнату через query при WebSocket-подключении; уточнены соглашения по тестам (зеркалирование слоёв `src/`) |
 | 2.1 | 2026-09-16 | Frontend задачи 13-14: замена `MediaManager`/`PeerConnectionManager` классов на React hooks `useMedia`/`useWebRTC`; основано на TDD v2.3 |
+| 2.2 | 2026-09-16 | Удалены задачи E2E тесты (23), мануальное тестирование WebRTC (24), демо-видео (29); задача 27 актуализирована (убрана PM2); итого 27 задач; основано на TDD v2.4 |
 
 > Каждая задача рассчитана на ≤ 1 рабочий день и оформляется одним MR/PR.
 > `_Requirements_` ссылается на нумерованные требования PRD раздел 4 (F-XX или № пункта); `_Design_` — на разделы TDD (1–14).
@@ -270,24 +271,6 @@
   - 22.5. Проверка обработки `disconnect` (broadcast user-left, удаление комнаты)
   - _Requirements: F-05, F-12, F-16, F-17, F-18, п.9, Design: 11 (Integration tests)_
 
-- [ ] 23. **E2E тесты (Playwright)**
-  - Автоматизировать ключевые пользовательские сценарии
-  - После задач 15, 16, 17
-  - 23.1. Настроить Playwright: два browser context одновременно; флаги Chrome `--use-fake-device-for-media-stream`, `--use-fake-ui-for-media-stream`; проверка обоих концов соединения
-  - 23.2. Создание комнаты и копирование ссылки
-  - 23.3. Вход по ссылке-приглашению, отображение видео
-  - 23.4. Отправка/получение сообщений в чате
-  - 23.5. Toggle микрофона и камеры, выход из комнаты
-  - _Requirements: F-01, F-02, F-03, F-07, F-12, F-17, Design: 11 (E2E tests)_
-
-- [ ] 24. **Мануальное тестирование WebRTC**
-  - Проверить видео/аудио в целевых браузерах и NAT-сценариях
-  - После задачи 18
-  - 24.1. Тест-матрица: Chrome/Firefox/Edge 100+ (video/audio/ICE)
-  - 24.2. Сценарии: одна локальная сеть, разные сети (STUN), без камеры/микрофона
-  - 24.3. Визуальная оценка отсутствия заметной задержки (точное измерение ≤500ms — out of scope MVP), документирование результатов
-  - _Requirements: F-06, п.14, п.34, NFR-COMPAT, NFR-PERF, Design: 11 (WebRTC testing)_
-
 ---
 
 ## DevOps / Инфраструктура
@@ -309,11 +292,11 @@
   - _Requirements: NFR-SEC, Design: 12 (env vars)_
 
 - [x] 27. **Production build**
-  - Настроить сборку и деплой (обязательно: рабочий запуск по README — требование задания)
+  - Настроить сборку и запуск (обязательно: рабочий запуск по README — требование задания)
   - После задач 1, 8, 26
   - 27.1. `npm run build` в client → статика в `client/dist`
-  - 27.2. Сервер раздаёт статику + WebSocket endpoint
-  - 27.3. PM2 ecosystem.config.js для production-запуска
+  - 27.2. Сервер в production (`NODE_ENV=production`) раздаёт `client/dist` + SPA-fallback + WebSocket endpoint
+  - 27.3. Скрипты сервера: `npm run build` (сборка клиента), `npm run serve` (build + start:prod), `npm run start:prod`
   - _Requirements: NFR-COMPAT, Design: 12 (deployment)_
 
 ---
@@ -329,18 +312,10 @@
   - 28.4. Структура проекта, описание env variables
   - _Requirements: NFR-COMPAT, Design: 12_
 
-- [ ] 29. **Демо-видео**
-  - Записать демонстрацию работы приложения
-  - После задач 23, 24 (когда функциональность готова)
-  - 29.1. Сценарий записи: создание комнаты → копирование ссылки → вход 2-4 участников
-  - 29.2. Демонстрация: видео/аудио, чат, toggle mic/camera, выход
-  - 29.3. Демонстрация крайних случаев: комната заполнена, отказ getUserMedia
-  - _Requirements: F-01..F-18 (демонстрация), Design: 1_
-
 ---
 
-**Итого: 30 задач** (Репозиторий: 1, Backend: 7, Frontend: 10, WebRTC: 3, Тесты: 4, DevOps: 3, Документация: 2)
+**Итого: 28 задач** (Репозиторий: 1, Backend: 7, Frontend: 10, WebRTC: 3, Тесты: 3, DevOps: 3, Документация: 1)
 
-**Критический путь:** 0 (git) → (25 HTTPS ‖ 1 server ‖ 8 client) → 2/3 → 4 → 5/6/7 (Backend) ‖ 10/13 → 11/14 → 12/15/16/17 (Frontend) → 18 → 19/20 (WebRTC integration) → 21/22/23/24 (Tests) → 27 (build) → 28/29 (Docs)
+**Критический путь:** 0 (git) → (25 HTTPS ‖ 1 server ‖ 8 client) → 2/3 → 4 → 5/6/7 (Backend) ‖ 10/13 → 11/14 → 12/15/16/17 (Frontend) → 18 → 19/20 (WebRTC integration) → 21/22/23 (Tests) → 27 (build) → 28 (Docs)
 
 > Примечание: задача 25 (HTTPS-сертификаты) выполняется параллельно с 1 и 8, но задача 1.3 (HTTPS-сервер) зависит от 25 — сертификаты должны существовать до запуска HTTPS-сервера.
