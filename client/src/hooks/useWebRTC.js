@@ -1,37 +1,34 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import config from '../config/index.js';
 
-
 /**
- * Снимок SDP-релевантного состояния pc.
+ * useWebRTC — управление RTCPeerConnection для mesh-топологии (TDD задача 14).
  *
- * Важно: сравниваем track.id, а не только kind — replaceTrack (null → track)
- * не меняет набор kind'ов sender'ов, но требует renegotiation, чтобы удалённый
- * пир получил SSRC и msid. Без track.id в снапшоте эффект localStream не увидит
- * разницы и не запустит renegotiation.
- */
-function snapshotPcState(pc) {
-  const senders = pc
-    .getSenders()
-    .map((s) => `${s.track?.kind ?? 'none'}:${s.track?.id ?? '-'}`)
-    .join(',');
-  const transceivers = pc
-    .getTransceivers()
-    .map((t) => {
-      const kind = t.receiver?.track?.kind || t.sender?.track?.kind || '?';
-      return `${kind}:${t.direction}`;
-    })
-    .join(',');
-  return `${senders}|${transceivers}`;
-}
-
-/**
- * useWebRTC — управление RTCPeerConnection для mesh-топологии.
+ * Perfect negotiation с фиксированными transceiver'ами:
+ * - при создании соединения резервируем transceiver'ы (audio, video) в
+ *   фиксированном порядке → одинаковый порядок m-lines у всех пиров;
+ * - onnegotiationneeded сам отправляет offer (в т.ч. при позднем включении
+ *   камеры через replaceTrack) — инициатором становится та сторона, что
+ *   реально изменила медиа;
+ * - glare разруливается вежливостью: при коллизии offer'ов невежливый пир
+ *   (меньший socket.id) игнорирует чужой offer, вежливый откатывается;
+ * - устройства могут быть выключены при входе (localStream=null) — transceiver
+ *   поднимет negotiation и пустое соединение установится, готовое принимать;
+ * - ICE-кандидаты буферизуются до установки remoteDescription;
+ * - удалённые треки агрегируются в один стабильный MediaStream на пир.
  *
- * Perfect negotiation (polite/impolite), фиксированный порядок m-lines через
- * addTransceiver, буферизация ICE, корректная обработка позднего localStream
- * (transceiver.direction = sendrecv всегда), агрегация удалённых треков по
- * socketId (audio + video в один MediaStream).
+ * @param {object} params
+ * @param {import('socket.io-client').Socket} params.socket
+ * @param {MediaStream} params.localStream
+ * @param {(socketId: string, stream: MediaStream) => void} params.onRemoteStream
+ * @param {(socketId: string) => void} params.onPeerLeft
+ * @param {(socketId: string, state: string) => void} [params.onConnectionStateChange]
+ * @returns {{
+ *   peers: Map<string, RTCPeerConnection>,
+ *   createPeerConnection: (socketId: string) => Promise<void>,
+ *   closePeerConnection: (socketId: string) => void,
+ *   closeAllConnections: () => void
+ * }}
  */
 export function useWebRTC({
   socket,
@@ -44,24 +41,18 @@ export function useWebRTC({
   const [peers, setPeers] = useState(new Map());
 
   const socketRef = useRef(socket);
-  useEffect(() => {
-    socketRef.current = socket;
-  }, [socket]);
+  socketRef.current = socket;
 
   const localStreamRef = useRef(localStream);
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
 
+  // ICE-кандидаты, пришедшие до установки remoteDescription
   const pendingCandidatesRef = useRef(new Map());
-  const pendingInitiatorsRef = useRef(new Set());
+  // Таймеры отложенного закрытия при disconnected
   const disconnectTimersRef = useRef(new Map());
-  const makingOfferRef = useRef(new Map());
-  const renegotiatePendingRef = useRef(new Map());
-
-  // socketId -> MediaStream, в который мы собираем треки, если удалённый пир
-  // не передал msid (event.streams пустой). Иначе audio и video оказались бы
-  // в разных MediaStream и второй затёр бы первый в состоянии RoomScreen.
+  // socketId -> стабильный MediaStream с удалёнными треками пира
   const remoteStreamsRef = useRef(new Map());
 
   const callbacksRef = useRef({ onRemoteStream, onPeerLeft, onConnectionStateChange });
@@ -88,19 +79,22 @@ export function useWebRTC({
 
   const closePeerConnection = useCallback((socketId, { notify = true } = {}) => {
     const pc = peersRef.current.get(socketId);
-    if (!pc) return;
 
-    delete pc._streamUpdateHandler;
-    try { pc.close(); } catch (_) { /* ignore */ }
-
-    peersRef.current.delete(socketId);
     pendingCandidatesRef.current.delete(socketId);
-    makingOfferRef.current.delete(socketId);
-    renegotiatePendingRef.current.delete(socketId);
-    pendingInitiatorsRef.current.delete(socketId);
     remoteStreamsRef.current.delete(socketId);
     clearDisconnectTimer(socketId);
 
+    if (!pc) return;
+
+    delete pc._streamUpdateHandler;
+    pc.onnegotiationneeded = null;
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.oniceconnectionstatechange = null;
+    pc.onconnectionstatechange = null;
+    try { pc.close(); } catch (_) { /* ignore */ }
+
+    peersRef.current.delete(socketId);
     setPeers(new Map(peersRef.current));
 
     if (notify && callbacksRef.current.onPeerLeft) {
@@ -108,79 +102,45 @@ export function useWebRTC({
     }
   }, [clearDisconnectTimer]);
 
-  // ---------------------------------------------------------------------------
-  // Negotiation
-  // ---------------------------------------------------------------------------
+  const flushPendingCandidates = useCallback(async (socketId, pc) => {
+    const pending = pendingCandidatesRef.current.get(socketId);
+    if (!pending || pending.length === 0) return;
+    pendingCandidatesRef.current.delete(socketId);
 
-  const handleNegotiationNeeded = useCallback(async (socketId) => {
-    const pc = peersRef.current.get(socketId);
-    if (!pc) return;
-
-    if (makingOfferRef.current.get(socketId)) {
-      renegotiatePendingRef.current.set(socketId, true);
-      return;
-    }
-
-    if (pc.signalingState !== 'stable') {
-      renegotiatePendingRef.current.set(socketId, true);
-      return;
-    }
-
-    let resolveDone;
-    const donePromise = new Promise((r) => { resolveDone = r; });
-    makingOfferRef.current.set(socketId, donePromise);
-    renegotiatePendingRef.current.delete(socketId);
-
-    try {
-      const offer = await pc.createOffer();
-      if (pc.signalingState !== 'stable') {
-        renegotiatePendingRef.current.set(socketId, true);
-        return;
-      }
-      await pc.setLocalDescription(offer);
-      emit('offer', { targetSocketId: socketId, sdp: pc.localDescription });
-    } catch (err) {
-      console.error('[useWebRTC] negotiationneeded error:', err);
-    } finally {
-      makingOfferRef.current.delete(socketId);
-      resolveDone();
-
-      if (renegotiatePendingRef.current.get(socketId)) {
-        renegotiatePendingRef.current.delete(socketId);
-        const current = peersRef.current.get(socketId);
-        if (current && current.signalingState === 'stable') {
-          handleNegotiationNeeded(socketId);
-        }
+    for (const candidate of pending) {
+      if (!candidate || !candidate.candidate) continue;
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('[useWebRTC] addIceCandidate (buffered) error:', err);
       }
     }
-  }, [emit]);
+  }, []);
 
   // ---------------------------------------------------------------------------
-  // Создание peer connection
+  // Создание RTCPeerConnection (задача 14.2, 14.5)
   // ---------------------------------------------------------------------------
 
-  const setupPeerConnection = useCallback((socketId, { polite }) => {
+  const setupPeerConnection = useCallback((socketId) => {
     const existing = peersRef.current.get(socketId);
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({ iceServers: config.webrtc.iceServers });
-    pc._polite = polite;
+    // Perfect-negotiation-флаги для защиты от glare при renegotiation.
+    // Вежливость: вежлив тот, у кого socket.id больше.
+    pc._polite = (socketRef.current?.id || '') > socketId;
+    pc._makingOffer = false;
     peersRef.current.set(socketId, pc);
     setPeers(new Map(peersRef.current));
 
-    pendingCandidatesRef.current.delete(socketId);
-    renegotiatePendingRef.current.delete(socketId);
-
+    // Резервируем transceiver'ы в фиксированном порядке (audio, video), сразу
+    // sendrecv. Это даёт: (1) одинаковый порядок m-lines у всех пиров, (2)
+    // onnegotiationneeded сработает даже без треков (вход с выключенными
+    // устройствами) — пустое соединение поднимется и будет готово принимать.
     const stream = localStreamRef.current;
     const audioTrack = stream?.getAudioTracks()[0] || null;
     const videoTrack = stream?.getVideoTracks()[0] || null;
 
-    // Transceiver'ы в фиксированном порядке (audio, video), сразу sendrecv.
-    //
-    // Если трека нет — streams пустой, браузер отправит m-line без msid,
-    // direction в SDP может понизиться до recvonly. Это допустимо: после
-    // появления трека мы делаем replaceTrack + setStreams и запускаем
-    // renegotiation (см. эффект localStream), которая обновит SDP.
     let audioTransceiver = null;
     let videoTransceiver = null;
     try {
@@ -196,110 +156,42 @@ export function useWebRTC({
       console.error('[useWebRTC] addTransceiver error:', err);
     }
 
-    /**
-     * Навешивает актуальные локальные треки на transceiver'ы.
-     * Возвращает true, если изменилось SDP-релевантное состояние.
-     *
-     * Ключевые моменты:
-     * - direction поднимаем до sendrecv, если браузер его понизил;
-     * - после replaceTrack вызываем sender.setStreams(stream), чтобы
-     *   в SDP появился msid и удалённый пир получил event.streams;
-     * - добавление трека туда, где его не было — требует renegotiation.
-     */
+    // Навешивает актуальные локальные треки на transceiver'ы. Трогаем sender
+    // ТОЛЬКО при реальной смене трека — иначе replaceTrack спровоцирует лишний
+    // onnegotiationneeded и получится цикл renegotiation.
     pc._streamUpdateHandler = async () => {
       const currentStream = localStreamRef.current;
-      if (!currentStream) return false;
-
-      const desiredAudio = currentStream.getAudioTracks()[0] || null;
-      const desiredVideo = currentStream.getVideoTracks()[0] || null;
-
-      let sdpRelevantChange = false;
+      if (!currentStream) return;
 
       const bind = async (transceiver, track) => {
-        if (!transceiver || transceiver.stopped) return;
-        if (!track) return;
-
-        if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'sendonly') {
-          transceiver.direction = 'sendrecv';
-          sdpRelevantChange = true;
-        }
-
-        const hadTrack = Boolean(transceiver.sender.track);
-
-        if (transceiver.sender.track !== track) {
-          try {
-            await transceiver.sender.replaceTrack(track);
-          } catch (err) {
-            console.error('[useWebRTC] replaceTrack error:', err);
-            return;
-          }
-        }
-
-        // setStreams меняет msid в SDP. Если раньше streams не было —
-        // это изменит SDP и потребует renegotiation, чтобы удалённый пир
-        // увидел event.streams. Если streams уже были — setStreams идемпотентен.
+        if (!transceiver || transceiver.stopped || !track) return;
+        if (transceiver.sender.track === track) return; // уже привязан
         try {
+          await transceiver.sender.replaceTrack(track);
           transceiver.sender.setStreams(currentStream);
         } catch (err) {
-          console.warn('[useWebRTC] setStreams error:', err);
+          console.error('[useWebRTC] replaceTrack error:', err);
         }
-
-        // Трек появился там, где его раньше не было — SDP должен обновиться,
-        // чтобы удалённый пир получил SSRC и сгенерировал ontrack.
-        if (!hadTrack) sdpRelevantChange = true;
       };
 
-      await bind(audioTransceiver, desiredAudio);
-      await bind(videoTransceiver, desiredVideo);
-
-      return sdpRelevantChange;
+      await bind(audioTransceiver, currentStream.getAudioTracks()[0] || null);
+      await bind(videoTransceiver, currentStream.getVideoTracks()[0] || null);
     };
 
-    // Первичная привязка (если stream уже есть). Renegotiation здесь не
-    // запускаем — setup вызывается из createPeerConnection (там инициатор сам
-    // создаст offer) или из handleOffer (там мы polite, ждём offer).
-    pc._streamUpdateHandler().catch((err) => {
-      console.error('[useWebRTC] initial bind error:', err);
-    });
-
-    // ontrack: агрегируем треки в один MediaStream на пир.
-    //
-    // event.streams пустой, когда удалённый пир не передал msid (типично для
-    // addTransceiver без streams + replaceTrack). Без fallback ontrack молча
-    // теряет трек — именно этот симптом «не все видеопотоки появляются».
+    // ontrack: собираем удалённые треки в один стабильный MediaStream на пир.
+    // event.streams ненадёжен (может быть пустым), поэтому агрегируем сами —
+    // так audio и video всегда в одном потоке и stream.id не меняется.
     pc.ontrack = (event) => {
-      const { track, streams } = event;
+      const { track } = event;
       if (!track) return;
 
-      let remoteStream = streams && streams[0];
-
+      let remoteStream = remoteStreamsRef.current.get(socketId);
       if (!remoteStream) {
-        // Переиспользуем уже созданный для этого пира MediaStream, чтобы
-        // audio и video не разошлись по двум объектам и не затёрли друг друга
-        // в setRemoteStreams.
-        remoteStream = remoteStreamsRef.current.get(socketId);
-        if (!remoteStream) {
-          remoteStream = new MediaStream();
-          remoteStreamsRef.current.set(socketId, remoteStream);
-        }
-        if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
-          remoteStream.addTrack(track);
-        }
-      } else {
-        // streams[0] пришёл от удалённого пира. Если у него два msid
-        // (audio и video отдельно), мы получим два MediaStream, и второй
-        // затрёт первый. Объединяем на всякий случай.
-        const existing = remoteStreamsRef.current.get(socketId);
-        if (existing && existing !== remoteStream) {
-          for (const t of remoteStream.getTracks()) {
-            if (!existing.getTracks().some((x) => x.id === t.id)) {
-              existing.addTrack(t);
-            }
-          }
-          remoteStream = existing;
-        } else {
-          remoteStreamsRef.current.set(socketId, remoteStream);
-        }
+        remoteStream = new MediaStream();
+        remoteStreamsRef.current.set(socketId, remoteStream);
+      }
+      if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+        remoteStream.addTrack(track);
       }
 
       callbacksRef.current.onRemoteStream?.(socketId, remoteStream);
@@ -314,8 +206,20 @@ export function useWebRTC({
       }
     };
 
-    pc.onnegotiationneeded = () => {
-      handleNegotiationNeeded(socketId);
+    // onnegotiationneeded: срабатывает при addTrack (включение камеры/микрофона
+    // после установки соединения). Инициатором renegotiation становится тот, у
+    // кого добавился трек. Glare защищаем через perfect-negotiation-флаги:
+    // невежливый (меньший socket.id) игнорирует чужой offer при коллизии.
+    pc.onnegotiationneeded = async () => {
+      try {
+        pc._makingOffer = true;
+        await pc.setLocalDescription();
+        emit('offer', { targetSocketId: socketId, sdp: pc.localDescription });
+      } catch (err) {
+        console.error('[useWebRTC] negotiationneeded error:', err);
+      } finally {
+        pc._makingOffer = false;
+      }
     };
 
     const handleState = (state) => {
@@ -327,7 +231,8 @@ export function useWebRTC({
       handleState(state);
 
       if (state === 'failed') {
-        closePeerConnection(socketId);
+        // Пробуем восстановить ICE вместо закрытия — соединение может ожить
+        try { pc.restartIce(); } catch (_) { /* ignore */ }
       } else if (state === 'disconnected') {
         clearDisconnectTimer(socketId);
         const timer = setTimeout(() => {
@@ -346,159 +251,77 @@ export function useWebRTC({
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       handleState(state);
-
-      if (state === 'failed' || state === 'closed') {
+      // Только closed закрываем окончательно; failed пробуем восстановить выше
+      if (state === 'closed') {
         closePeerConnection(socketId);
       }
     };
 
     return pc;
-  }, [emit, handleNegotiationNeeded, closePeerConnection, clearDisconnectTimer]);
+  }, [emit, closePeerConnection, clearDisconnectTimer]);
 
   // ---------------------------------------------------------------------------
-  // Инициация соединений
+  // createPeerConnection(socketId, isInitiator) (задача 14.2, 14.3)
   // ---------------------------------------------------------------------------
 
-  const createPeerConnection = useCallback(async (socketId, isInitiator) => {
+  const createPeerConnection = useCallback(async (socketId) => {
     if (!socketRef.current) return;
-
-    let pc = peersRef.current.get(socketId);
-    if (!pc) {
-      pc = setupPeerConnection(socketId, { polite: !isInitiator });
+    // Просто создаём соединение. addTransceiver в setupPeerConnection поднимет
+    // onnegotiationneeded, и инициатор сам отправит offer — двойного offer нет.
+    // Роль вежливости и glare разруливаются в handleOffer.
+    if (!peersRef.current.has(socketId)) {
+      setupPeerConnection(socketId);
     }
-
-    if (!isInitiator) return;
-
-    if (pc.signalingState !== 'stable') {
-      renegotiatePendingRef.current.set(socketId, true);
-      return;
-    }
-
-    try {
-      await handleNegotiationNeeded(socketId);
-    } catch (err) {
-      console.error('[useWebRTC] createPeerConnection error:', err);
-      closePeerConnection(socketId);
-    }
-  }, [setupPeerConnection, closePeerConnection, handleNegotiationNeeded]);
+  }, [setupPeerConnection]);
 
   // ---------------------------------------------------------------------------
-  // Обработка входящих сигналов
+  // Signaling handlers (задача 14.4)
   // ---------------------------------------------------------------------------
-
-  const flushPendingCandidates = useCallback(async (socketId, pc) => {
-    const pending = pendingCandidatesRef.current.get(socketId);
-    if (!pending || pending.length === 0) return;
-
-    pendingCandidatesRef.current.delete(socketId);
-
-    const failed = [];
-    for (const candidate of pending) {
-      if (!candidate || !candidate.candidate) continue;
-      try {
-        await pc.addIceCandidate(candidate);
-      } catch (err) {
-        if (err.name === 'OperationError' || err.name === 'InvalidStateError') {
-          failed.push(candidate);
-        } else {
-          console.error('[useWebRTC] addIceCandidate (buffered) error:', err);
-        }
-      }
-    }
-
-    if (failed.length > 0) {
-      const existing = pendingCandidatesRef.current.get(socketId) || [];
-      pendingCandidatesRef.current.set(socketId, [...existing, ...failed]);
-    }
-  }, []);
 
   const handleOffer = useCallback(async (fromSocketId, sdp) => {
     let pc = peersRef.current.get(fromSocketId);
-    if (!pc) {
-      const myId = socketRef.current?.id || '';
-      const polite = myId > fromSocketId;
-      pc = setupPeerConnection(fromSocketId, { polite });
-    }
+    if (!pc) pc = setupPeerConnection(fromSocketId);
 
     try {
-      const inFlight = makingOfferRef.current.get(fromSocketId);
-      const makingOffer = Boolean(inFlight);
-      const offerCollision = makingOffer || pc.signalingState !== 'stable';
+      // Glare: offer пришёл, пока мы сами делаем offer или не в stable.
+      const collision = pc._makingOffer || pc.signalingState !== 'stable';
+      const ignoreOffer = !pc._polite && collision;
 
-      if (offerCollision && !pc._polite) {
+      if (ignoreOffer) {
+        // Невежливый пир игнорирует конфликтующий offer — победит его offer
         return;
       }
 
-      if (offerCollision && pc._polite) {
-        if (inFlight) {
-          try { await inFlight; } catch (_) { /* ignore */ }
-        }
-        if (pc.signalingState !== 'stable') {
-          try {
-            await pc.setLocalDescription({ type: 'rollback' });
-          } catch (err) {
-            console.warn('[useWebRTC] rollback failed:', err);
-          }
-        }
-      }
-
-      if (pc.signalingState !== 'stable') {
-        console.warn('[useWebRTC] skip offer: signalingState =', pc.signalingState);
-        return;
-      }
-
-      await pc.setRemoteDescription(sdp);
+      // Вежливый пир при коллизии откатывается: setRemoteDescription(offer)
+      // из не-stable делает implicit rollback.
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushPendingCandidates(fromSocketId, pc);
-
-      if (pc.signalingState !== 'have-remote-offer') return;
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      emit('answer', { targetSocketId: fromSocketId, sdp: answer });
+      await pc.setLocalDescription();
+      emit('answer', { targetSocketId: fromSocketId, sdp: pc.localDescription });
     } catch (err) {
-      if (err.name === 'InvalidAccessError') {
-        const myId = socketRef.current?.id || '';
-        closePeerConnection(fromSocketId, { notify: false });
-        createPeerConnection(fromSocketId, myId < fromSocketId);
-        return;
-      }
       console.error('[useWebRTC] handleOffer error:', err);
     }
-  }, [setupPeerConnection, flushPendingCandidates, emit, closePeerConnection, createPeerConnection]);
+  }, [setupPeerConnection, flushPendingCandidates, emit]);
 
   const handleAnswer = useCallback(async (fromSocketId, sdp) => {
     const pc = peersRef.current.get(fromSocketId);
     if (!pc) return;
 
-    if (pc.signalingState !== 'have-local-offer') {
-      return;
-    }
-
     try {
-      await pc.setRemoteDescription(sdp);
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushPendingCandidates(fromSocketId, pc);
-
-      if (renegotiatePendingRef.current.get(fromSocketId) && pc.signalingState === 'stable') {
-        renegotiatePendingRef.current.delete(fromSocketId);
-        handleNegotiationNeeded(fromSocketId);
-      }
     } catch (err) {
       console.error('[useWebRTC] handleAnswer error:', err);
     }
-  }, [flushPendingCandidates, handleNegotiationNeeded]);
+  }, [flushPendingCandidates]);
 
   const handleIceCandidate = useCallback(async (fromSocketId, candidate) => {
     if (!candidate || !candidate.candidate) return;
 
     const pc = peersRef.current.get(fromSocketId);
 
-    const notReady =
-      !pc ||
-      !pc.remoteDescription ||
-      !pc.remoteDescription.type ||
-      pc.signalingState !== 'stable';
-
-    if (notReady) {
+    // До remoteDescription addIceCandidate падает — буферизуем
+    if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
       const list = pendingCandidatesRef.current.get(fromSocketId) || [];
       list.push(candidate);
       pendingCandidatesRef.current.set(fromSocketId, list);
@@ -506,35 +329,23 @@ export function useWebRTC({
     }
 
     try {
-      await pc.addIceCandidate(candidate);
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
-      if (err.name === 'OperationError' || err.name === 'InvalidStateError') {
-        const list = pendingCandidatesRef.current.get(fromSocketId) || [];
-        list.push(candidate);
-        pendingCandidatesRef.current.set(fromSocketId, list);
-      } else {
-        console.error('[useWebRTC] addIceCandidate error:', err);
-      }
+      console.error('[useWebRTC] addIceCandidate error:', err);
     }
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Закрытие
+  // Закрытие (задача 14.7)
   // ---------------------------------------------------------------------------
 
   const closeAllConnections = useCallback(() => {
     const ids = Array.from(peersRef.current.keys());
-    ids.forEach((socketId) => {
-      closePeerConnection(socketId, { notify: true });
-    });
+    ids.forEach((socketId) => closePeerConnection(socketId, { notify: true }));
 
     peersRef.current.clear();
     pendingCandidatesRef.current.clear();
-    makingOfferRef.current.clear();
-    renegotiatePendingRef.current.clear();
-    pendingInitiatorsRef.current.clear();
     remoteStreamsRef.current.clear();
-
     disconnectTimersRef.current.forEach((timer) => clearTimeout(timer));
     disconnectTimersRef.current.clear();
 
@@ -542,72 +353,27 @@ export function useWebRTC({
   }, [closePeerConnection]);
 
   // ---------------------------------------------------------------------------
-  // Отложенные инициации
+  // Эффект: локальный поток появился/сменился — навешиваем треки на transceiver'ы
   // ---------------------------------------------------------------------------
 
-  const initiatePendingConnections = useCallback(() => {
-    if (pendingInitiatorsRef.current.size === 0) return;
-    const targets = Array.from(pendingInitiatorsRef.current);
-    pendingInitiatorsRef.current.clear();
-    targets.forEach((socketId) => {
-      if (!peersRef.current.has(socketId)) {
-        createPeerConnection(socketId, true);
-      }
-    });
-  }, [createPeerConnection]);
-
-  // ---------------------------------------------------------------------------
-  // Effects
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Реакция на появление/смену локального потока.
-   *
-   * Ключевая логика mesh: после появления треков у impolite-пира запускаем
-   * renegotiation. Polite-пир только помечает renegotiatePending — он дождётся
-   * offer'а от impolite и обновит SDP в answer'е. Это убирает каскад
-   * одновременных offer'ов при появлении localStream у всех участников.
-   */
   useEffect(() => {
-    initiatePendingConnections();
-
     if (!localStream) return;
 
-    peersRef.current.forEach(async (pc, socketId) => {
+    peersRef.current.forEach((pc) => {
       if (!pc._streamUpdateHandler) return;
-
-      const before = snapshotPcState(pc);
-
-      try {
-        await pc._streamUpdateHandler();
-      } catch (err) {
+      // replaceTrack на пустой transceiver.sender сам поднимет
+      // onnegotiationneeded → offer уйдёт корректно у той стороны, что включила
+      // камеру. Ручной offer не нужен, двойного offer нет.
+      pc._streamUpdateHandler().catch((err) => {
         console.error('[useWebRTC] streamUpdateHandler error:', err);
-        return;
-      }
-
-      const after = snapshotPcState(pc);
-      if (before === after) return;
-
-      const myId = socketRef.current?.id || '';
-      const weAreImpolite = myId < socketId;
-
-      if (pc.signalingState === 'stable') {
-        if (weAreImpolite) {
-          handleNegotiationNeeded(socketId);
-        } else {
-          // Polite: ждём offer от impolite. Если impolite не инициирует
-          // (например, у него не было треков и снапшот не изменился),
-          // negotiationneeded всё равно выстрелит на его стороне, потому что
-          // SDP у него тоже изменился. Здесь мы просто помечаем.
-          renegotiatePendingRef.current.set(socketId, true);
-        }
-      } else {
-        renegotiatePendingRef.current.set(socketId, true);
-      }
+      });
     });
-  }, [localStream, initiatePendingConnections, handleNegotiationNeeded]);
+  }, [localStream]);
 
-  // Socket-события WebRTC
+  // ---------------------------------------------------------------------------
+  // Signaling подписка (задача 14.1, 14.4)
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     if (!socket) return undefined;
 
@@ -626,40 +392,33 @@ export function useWebRTC({
     };
   }, [socket, handleOffer, handleAnswer, handleIceCandidate]);
 
-  // Socket-события комнаты
+  // ---------------------------------------------------------------------------
+  // Room события: кто инициатор (задача 14.3, правило против glare)
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     if (!socket) return undefined;
 
+    // Входим в комнату: создаём соединение с каждым существующим участником.
+    // Кто шлёт offer — решает onnegotiationneeded (сработает при addTransceiver),
+    // glare разруливается в handleOffer по вежливости (больший socket.id вежлив).
     const onRoomJoined = ({ participants = [] }) => {
       participants.forEach((p) => {
-        const peerId = p.socketId;
-        if (peerId === socket.id) return;
-        if (peersRef.current.has(peerId)) return;
-
-        if (socket.id < peerId) {
-          pendingInitiatorsRef.current.add(peerId);
-        } else {
-          setupPeerConnection(peerId, { polite: true });
-        }
+        if (p.socketId === socket.id) return;
+        if (peersRef.current.has(p.socketId)) return;
+        createPeerConnection(p.socketId);
       });
-      initiatePendingConnections();
     };
 
-    const onUserJoined = ({ socketId }) => {
-      if (socketId === socket.id) return;
-      if (peersRef.current.has(socketId)) return;
-
-      const shouldInitiate = socket.id < socketId;
-      if (shouldInitiate) {
-        pendingInitiatorsRef.current.add(socketId);
-        initiatePendingConnections();
-      } else {
-        setupPeerConnection(socketId, { polite: true });
-      }
+    // Пришёл новый участник — создаём соединение и с ним.
+    const onUserJoined = ({ socketId: newId }) => {
+      if (newId === socket.id) return;
+      if (peersRef.current.has(newId)) return;
+      createPeerConnection(newId);
     };
 
-    const onUserLeft = ({ socketId }) => {
-      closePeerConnection(socketId);
+    const onUserLeft = ({ socketId: leftId }) => {
+      closePeerConnection(leftId);
     };
 
     socket.on('room-joined', onRoomJoined);
@@ -671,29 +430,19 @@ export function useWebRTC({
       socket.off('user-joined', onUserJoined);
       socket.off('user-left', onUserLeft);
     };
-  }, [
-    socket,
-    createPeerConnection,
-    closePeerConnection,
-    initiatePendingConnections,
-    setupPeerConnection
-  ]);
+  }, [socket, createPeerConnection, closePeerConnection]);
 
-  // Cleanup при unmount
+  // ---------------------------------------------------------------------------
+  // Cleanup при unmount (задача 14.8)
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     return () => {
-      const ids = Array.from(peersRef.current.keys());
-      ids.forEach((socketId) => {
-        const pc = peersRef.current.get(socketId);
-        if (pc) {
-          try { pc.close(); } catch (_) { /* ignore */ }
-        }
+      peersRef.current.forEach((pc) => {
+        try { pc.close(); } catch (_) { /* ignore */ }
       });
       peersRef.current.clear();
       pendingCandidatesRef.current.clear();
-      makingOfferRef.current.clear();
-      renegotiatePendingRef.current.clear();
-      pendingInitiatorsRef.current.clear();
       remoteStreamsRef.current.clear();
       disconnectTimersRef.current.forEach((t) => clearTimeout(t));
       disconnectTimersRef.current.clear();
