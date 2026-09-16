@@ -167,4 +167,47 @@ describe('useMedia', () => {
     expect(mockAudioTrack.stop).toHaveBeenCalled();
     expect(mockVideoTrack.stop).toHaveBeenCalled();
   });
+
+  it('навешивает onended на треки после старта', async () => {
+    const { result } = renderHook(() => useMedia({ autoStart: true }));
+
+    await waitFor(() => {
+      expect(result.current.localStream).toBeTruthy();
+    });
+
+    expect(typeof mockAudioTrack.onended).toBe('function');
+    expect(typeof mockVideoTrack.onended).toBe('function');
+  });
+
+  it('выключает аудио и вызывает onDeviceLost при потере микрофона', async () => {
+    const onDeviceLost = vi.fn();
+    const { result } = renderHook(() => useMedia({ autoStart: true, onDeviceLost }));
+
+    await waitFor(() => {
+      expect(result.current.localStream).toBeTruthy();
+    });
+
+    act(() => {
+      mockAudioTrack.onended();
+    });
+
+    expect(result.current.isAudioEnabled).toBe(false);
+    expect(onDeviceLost).toHaveBeenCalledWith('audio');
+  });
+
+  it('выключает видео и вызывает onDeviceLost при потере камеры', async () => {
+    const onDeviceLost = vi.fn();
+    const { result } = renderHook(() => useMedia({ autoStart: true, onDeviceLost }));
+
+    await waitFor(() => {
+      expect(result.current.localStream).toBeTruthy();
+    });
+
+    act(() => {
+      mockVideoTrack.onended();
+    });
+
+    expect(result.current.isVideoEnabled).toBe(false);
+    expect(onDeviceLost).toHaveBeenCalledWith('video');
+  });
 });

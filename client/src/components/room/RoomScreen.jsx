@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket.js';
 import { useMedia } from '../../hooks/useMedia.js';
@@ -32,6 +32,12 @@ function RoomScreen() {
     enabled: Boolean(userName)
   });
 
+  // Актуальный socket доступен в колбэках без пересоздания useMedia
+  const socketRef = useRef(null);
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
   const {
     localStream,
     isAudioEnabled,
@@ -40,7 +46,14 @@ function RoomScreen() {
     startMedia,
     toggleAudio,
     toggleVideo
-  } = useMedia();
+  } = useMedia({
+    onDeviceLost: (kind) => {
+      // Устройство пропало во время звонка — сообщаем остальным
+      if (socketRef.current) {
+        socketRef.current.emit('media-state', { kind, enabled: false });
+      }
+    }
+  });
 
   // Список участников в реальном времени
   const [participants, setParticipants] = useState([]);

@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from 'react';
  *
  * @param {object} options
  * @param {boolean} options.autoStart - автоматически запрашивать getUserMedia при монтировании
+ * @param {(kind: 'audio' | 'video') => void} [options.onDeviceLost] - устройство пропало во время звонка
  * @returns {{
  *   localStream: MediaStream | null,
  *   isAudioEnabled: boolean,
@@ -16,12 +17,18 @@ import { useState, useEffect, useRef } from 'react';
  *   toggleVideo: (enabled?: boolean) => void
  * }}
  */
-export function useMedia({ autoStart = false } = {}) {
+export function useMedia({ autoStart = false, onDeviceLost } = {}) {
   const [localStream, setLocalStream] = useState(null);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [error, setError] = useState(null);
   const streamRef = useRef(null);
+
+  // Актуальный колбэк доступен внутри track.onended без пересоздания
+  const onDeviceLostRef = useRef(onDeviceLost);
+  useEffect(() => {
+    onDeviceLostRef.current = onDeviceLost;
+  }, [onDeviceLost]);
 
   // Дефолтные constraints: 720p @ 30fps (NFR-PERF)
   const constraints = {
@@ -30,6 +37,18 @@ export function useMedia({ autoStart = false } = {}) {
       width: { ideal: 1280 },
       height: { ideal: 720 },
       frameRate: { ideal: 30 }
+    }
+  };
+
+  // Потеря устройства во время звонка (отключили/занял другой апп)
+  const handleTrackEnded = (kind) => {
+    if (kind === 'audio') {
+      setIsAudioEnabled(false);
+    } else if (kind === 'video') {
+      setIsVideoEnabled(false);
+    }
+    if (onDeviceLostRef.current) {
+      onDeviceLostRef.current(kind);
     }
   };
 
@@ -47,6 +66,14 @@ export function useMedia({ autoStart = false } = {}) {
 
       setIsAudioEnabled(audioTrack?.enabled ?? false);
       setIsVideoEnabled(videoTrack?.enabled ?? false);
+
+      // Отслеживаем потерю устройства во время звонка
+      if (audioTrack) {
+        audioTrack.onended = () => handleTrackEnded('audio');
+      }
+      if (videoTrack) {
+        videoTrack.onended = () => handleTrackEnded('video');
+      }
     } catch (err) {
       let errorMessage = 'Не удалось получить доступ к устройствам';
 
