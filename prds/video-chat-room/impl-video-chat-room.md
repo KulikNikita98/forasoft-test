@@ -148,7 +148,7 @@
   - 10.3. Обработка события `room-joined` (участники, история чата) и `error` (validation/room-full)
   - _Requirements: п.35, Design: 4, 6, 8 (недоступность сервера)_
 
-- [ ] 11. **RoomScreen layout**
+- [x] 11. **RoomScreen layout**
   - Основной экран комнаты, координация дочерних компонентов и состояния
   - После задач 9, 10
   - 11.1. Layout: видеосетка + панель управления + чат/список участников
@@ -179,7 +179,7 @@
   - 13.6. Автоматическая очистка (`stopMedia()`) при unmount компонента
   - _Requirements: F-06, F-09, F-10, п.13, п.14, п.19, Design: 4 (useMedia), 7, 9_
 
-- [ ] 14. **useWebRTC hook (PeerConnectionManager)**
+- [x] 14. **useWebRTC hook (PeerConnectionManager)**
   - React hook для управления RTCPeerConnection в mesh-топологии
   - После задачи 13
   - 14.1. `useWebRTC({ socket, localStream, onRemoteStream, onPeerLeft })` — hook с автоматической подпиской на Socket.io signaling
