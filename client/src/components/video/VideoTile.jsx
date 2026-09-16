@@ -140,7 +140,7 @@ function VideoTile({
 
   return (
     <div
-      className="relative w-full aspect-video overflow-hidden rounded-lg bg-gray-900"
+      className="relative overflow-hidden rounded-lg bg-gray-900"
       aria-label={`Видео участника ${userName}`}
       role="img"
     >

@@ -340,7 +340,7 @@ function RoomScreen() {
   // ---------------------------------------------------------------------------
   return (
     <div className="flex h-screen flex-col bg-gray-900 text-white">
-      <header className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+      <header className="flex shrink-0 items-center justify-between border-b border-gray-800 px-4 py-3">
         <h1 className="text-lg font-semibold">
           Комната <span className="text-sm text-gray-400">{roomId}</span>
         </h1>
@@ -377,12 +377,14 @@ function RoomScreen() {
           )}
         </main>
 
-        <aside className="flex w-full md:w-72 flex-col gap-4 border-t md:border-t-0 md:border-l border-gray-800 p-4 max-h-64 md:max-h-none overflow-hidden">
-          <ParticipantList
-            participants={allParticipants}
-            currentUserName={userName}
-          />
-          <div className="min-h-0 flex-1">
+        <aside className="flex w-full md:w-72 shrink-0 flex-col gap-4 border-t md:border-t-0 md:border-l border-gray-800 p-4 max-h-64 md:max-h-none min-h-0 overflow-hidden">
+          <div className="shrink-0">
+            <ParticipantList
+              participants={allParticipants}
+              currentUserName={userName}
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
             <Chat
               messages={messages}
               onSend={handleSendMessage}
@@ -392,7 +394,7 @@ function RoomScreen() {
         </aside>
       </div>
 
-      <footer className="border-t border-gray-800 px-4 py-3">
+      <footer className="shrink-0 border-t border-gray-800 px-4 py-3">
         <Controls
           isMicEnabled={isAudioEnabled}
           isVideoEnabled={isVideoEnabled}
