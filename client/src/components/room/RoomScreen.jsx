@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket.js';
+import { useMedia } from '../../hooks/useMedia.js';
 import NamePrompt from './NamePrompt.jsx';
 import RoomError from './RoomError.jsx';
 import InviteButton from './InviteButton.jsx';
 import { ParticipantList } from '../participant/index.js';
+import { VideoGrid } from '../video/index.js';
 
 /**
  * RoomScreen — экран комнаты. Координирует подключение и дочерние компоненты.
- * Видеосетка (задача 12), чат (задача 16), панель управления (задача 15)
- * пока представлены заглушками.
+ * Видеосетка (задача 12), чат (задача 16), панель управления (задача 15).
  */
 function RoomScreen() {
   const { roomId } = useParams();
@@ -24,8 +25,18 @@ function RoomScreen() {
     enabled: Boolean(userName)
   });
 
+  // Локальные медиа-устройства (задача 13)
+  const { localStream, isAudioEnabled, isVideoEnabled, startMedia } = useMedia();
+
   // Список участников в реальном времени
   const [participants, setParticipants] = useState([]);
+
+  // Запуск локального потока при успешном подключении
+  useEffect(() => {
+    if (status === 'connected') {
+      startMedia();
+    }
+  }, [status]);
 
   // Инициализация списка из room-joined
   useEffect(() => {
@@ -75,11 +86,17 @@ function RoomScreen() {
       <div className="flex flex-1 overflow-hidden">
         {/* Основная область: видеосетка (задача 12) */}
         <main className="flex flex-1 items-center justify-center p-4">
-          <div className="text-gray-500">
-            {status === 'connecting'
-              ? 'Подключение...'
-              : 'Видеосетка (в разработке — задача 12)'}
-          </div>
+          {status === 'connecting' ? (
+            <div className="text-gray-500">Подключение...</div>
+          ) : (
+            <VideoGrid
+              participants={participants}
+              localStream={localStream}
+              localUserName={userName}
+              isLocalMuted={!isAudioEnabled}
+              isLocalVideoOff={!isVideoEnabled}
+            />
+          )}
         </main>
 
         {/* Боковая панель: участники + чат (задача 16) */}
