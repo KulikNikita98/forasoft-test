@@ -4,7 +4,7 @@
 |---|---|
 | **Version** | 2.3 |
 | **Date** | 2026-09-16 |
-| **Status** | In Progress |
+| **Status** | Completed |
 | **Feature** | video-chat-room |
 | **Based on** | PRD: `prds/video-chat-room/prd-video-chat-room.md` v1.0, TDD: `prds/video-chat-room/design-video-chat-room.md` v2.5 |
 
